@@ -627,7 +627,7 @@ def demarrer_bot():
     log.info(f"  Capital : {CAPITAL_INITIAL}EUR | Levier x{LEVIER}")
     log.info(f"  Base V7.3 + Détection régime automatique")
     log.info(f"  Scan régime toutes les {V8_SCAN_INTERVAL//60} minutes")
-    log.info(f"  Telegram : {'✅ ON' if TELEGRAM_TOKEN else '❌ OFF'}")
+    log.info(f"  Telegram : ❌ OFF (désactivé)")
     log.info("=" * 55)
 
     init_database()
