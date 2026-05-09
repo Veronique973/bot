@@ -51,10 +51,6 @@ MAX_PERTES_CONSECUTIVES = 2
 SEUIL_RUINE             = 0.30
 PAUSE_DUREE             = 86400
 
-# Telegram
-TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-
 # Trailing Stop Progressif — IDENTIQUE V7.3
 TRAILING_NIVEAUX = [
     (100, 0.05),
@@ -194,17 +190,7 @@ def detecter_regime():
 # ══════════════════════════════════════════════════════════════
 
 def telegram(message):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        }, timeout=10)
-    except Exception as e:
-        log.error(f"Erreur Telegram : {e}")
+    pass  # Telegram désactivé sur Bot 3
 
 # ══════════════════════════════════════════════════════════════
 # DONNÉES — IDENTIQUE V7.3
