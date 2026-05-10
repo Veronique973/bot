@@ -104,7 +104,10 @@ MARCHES = [
     "ATOMUSDT",  # WR 63.6% | +5.56€
     "LINKUSDT",  # WR 66.7% | +9.79€
     "AVAXUSDT",  # WR 60.0% | +2.09€
-    "NEARUSDT"   # WR 70.0% | +3.69€
+    "NEARUSDT",  # WR 70.0% | +3.69€
+    "SOLUSDT",   # WR 84.6% — meilleur WR backtest V7
+    "ADAUSDT",   # WR 63.6% | +1.41€ backtest V8
+    "DOTUSDT"    # Validé backtest V7
 ]
 
 KRAKEN_SYMBOLS = {
@@ -114,7 +117,10 @@ KRAKEN_SYMBOLS = {
     "ATOMUSDT": "ATOMUSD",
     "LINKUSDT": "LINKUSD",
     "AVAXUSDT": "AVAXUSD",
-    "NEARUSDT": "NEARUSD"
+    "NEARUSDT": "NEARUSD",
+    "SOLUSDT":  "SOLUSD",
+    "ADAUSDT":  "ADAUSD",
+    "DOTUSDT":  "DOTUSD"
 }
 
 log.info("=" * 55)
@@ -123,7 +129,7 @@ log.info(f"  Capital : {CAPITAL_INITIAL}EUR | Levier x{LEVIER} | Mise {MISE_FIXE
 log.info(f"  RSI < {RSI_ACHAT} → ACHAT | RSI > {RSI_VENTE} → VENTE")
 log.info(f"  Stop ATR×{ATR_MULTIPLIER} | Ratio 1:{RATIO_RR}")
 log.info(f"  Trailing Stop : {len(TRAILING_NIVEAUX)-1} niveaux progressifs")
-log.info(f"  Marchés : {len(MARCHES)} cryptos validés")
+log.info(f"  Marches : {len(MARCHES)} cryptos validés")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 55)
 
