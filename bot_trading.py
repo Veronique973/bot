@@ -72,8 +72,14 @@ def get_multiplicateur_atr(pnl):
     return 2.50
 
 MARCHES = [
-    "BTCUSDT", "ETHUSDT", "XRPUSDT", "ATOMUSDT", "LINKUSDT",
-    "ADAUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT", "DOTUSDT"
+    # 7 marchés validés par backtest V8
+    "BTCUSDT",   # WR 70.0% | +1.82€ ✅
+    "ETHUSDT",   # WR 57.1% | +1.57€ ✅
+    "XRPUSDT",   # WR 69.2% | +4.38€ ✅
+    "ATOMUSDT",  # WR 63.6% | +5.56€ ✅
+    "LINKUSDT",  # WR 66.7% | +9.79€ ✅
+    "AVAXUSDT",  # WR 60.0% | +2.09€ ✅
+    "NEARUSDT"   # WR 70.0% | +3.69€ ✅
 ]
 
 KRAKEN_SYMBOLS = {
@@ -82,11 +88,8 @@ KRAKEN_SYMBOLS = {
     "XRPUSDT":  "XXRPZUSD",
     "ATOMUSDT": "ATOMUSD",
     "LINKUSDT": "LINKUSD",
-    "ADAUSDT":  "ADAUSD",
-    "SOLUSDT":  "SOLUSD",
     "AVAXUSDT": "AVAXUSD",
-    "NEARUSDT": "NEARUSD",
-    "DOTUSDT":  "DOTUSD"
+    "NEARUSDT": "NEARUSD"
 }
 
 # ══════════════════════════════════════════════════════════════
