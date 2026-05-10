@@ -1,11 +1,10 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║           BOT MEAN REVERSION V8 — ADAPTATIF                 ║
-║   Base : V7.3 identique — RIEN N'A CHANGÉ                  ║
-║   PLUS : Adaptation automatique au régime de marché         ║
-║   Régime RANGE    → Paramètres normaux                      ║
-║   Régime VOLATILE → Mise réduite à 10%                      ║
-║   Régime TENDANCE → RSI seuil 75/25 (plus strict)          ║
+║   Base V7.3 + Détection régime automatique                  ║
+║   RANGE → RSI 30/70 | TENDANCE → RSI 25/75                 ║
+║   VOLATILE → Mise 10% | Telegram | Rapport quotidien        ║
+║   7 marchés validés par backtest | PostgreSQL                ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -13,8 +12,8 @@ import requests
 import time
 import os
 import logging
-import pandas as pd
 import datetime as dt
+import pandas as pd
 from ta.trend import ADXIndicator
 from ta.volatility import AverageTrueRange
 from ta.momentum import RSIIndicator
@@ -29,12 +28,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
-# CONFIGURATION — IDENTIQUE V7.3 (NE PAS MODIFIER)
+# CONFIGURATION — IDENTIQUE V7.3
 # ══════════════════════════════════════════════════════════════
 
 CAPITAL_INITIAL         = 215.0
 LEVIER                  = 10
-MISE_FIXE_PCT           = 0.20      # Paramètre de base — peut être ajusté par V8
+MISE_FIXE_PCT           = 0.20
 KELLY_FRACTION          = 0.25
 KELLY_CAP               = 0.20
 MIN_TRADES_KELLY        = 30
@@ -44,15 +43,19 @@ RATIO_PARTIEL           = 1.0
 PAUSE                   = 120
 CHECK_INTERVAL          = 10
 TIMEOUT_TRADE           = 12 * 3600
-RSI_ACHAT               = 30        # Paramètre de base — peut être ajusté par V8
-RSI_VENTE               = 70        # Paramètre de base — peut être ajusté par V8
+RSI_ACHAT               = 30
+RSI_VENTE               = 70
 VOLUME_MINI             = 0.40
 ADX_MAX                 = 40
 MAX_PERTES_CONSECUTIVES = 2
 SEUIL_RUINE             = 0.30
 PAUSE_DUREE             = 86400
 
-# Trailing Stop Progressif — IDENTIQUE V7.3
+# Telegram
+TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+# Trailing Stop Progressif
 TRAILING_NIVEAUX = [
     (100, 0.05),
     ( 75, 0.07),
@@ -72,15 +75,36 @@ def get_multiplicateur_atr(pnl):
             return mult
     return 2.50
 
+# ══════════════════════════════════════════════════════════════
+# V8 — RÉGIME DE MARCHÉ
+# ══════════════════════════════════════════════════════════════
+
+V8_ADX_TENDANCE  = 35
+V8_ATR_VOLATILE  = 3.0
+V8_SCAN_INTERVAL = 3600
+
+regime_actuel = {
+    "mode":        "RANGE",
+    "mise_pct":    0.20,
+    "rsi_achat":   30,
+    "rsi_vente":   70,
+    "derniere_maj": 0
+}
+
+dernier_rapport = {"date": ""}
+
+# ══════════════════════════════════════════════════════════════
+# 7 MARCHÉS VALIDÉS PAR BACKTEST V8
+# ══════════════════════════════════════════════════════════════
+
 MARCHES = [
-    # 7 marchés validés par backtest V8
-    "BTCUSDT",   # WR 70.0% | +1.82€ ✅
-    "ETHUSDT",   # WR 57.1% | +1.57€ ✅
-    "XRPUSDT",   # WR 69.2% | +4.38€ ✅
-    "ATOMUSDT",  # WR 63.6% | +5.56€ ✅
-    "LINKUSDT",  # WR 66.7% | +9.79€ ✅
-    "AVAXUSDT",  # WR 60.0% | +2.09€ ✅
-    "NEARUSDT"   # WR 70.0% | +3.69€ ✅
+    "BTCUSDT",   # WR 70.0% | +1.82€
+    "ETHUSDT",   # WR 57.1% | +1.57€
+    "XRPUSDT",   # WR 69.2% | +4.38€
+    "ATOMUSDT",  # WR 63.6% | +5.56€
+    "LINKUSDT",  # WR 66.7% | +9.79€
+    "AVAXUSDT",  # WR 60.0% | +2.09€
+    "NEARUSDT"   # WR 70.0% | +3.69€
 ]
 
 KRAKEN_SYMBOLS = {
@@ -93,108 +117,18 @@ KRAKEN_SYMBOLS = {
     "NEARUSDT": "NEARUSD"
 }
 
-# ══════════════════════════════════════════════════════════════
-# V8 — DÉTECTION DU RÉGIME DE MARCHÉ
-# C'est le SEUL ajout par rapport à V7.3
-# ══════════════════════════════════════════════════════════════
-
-# Seuils de détection
-V8_ADX_TENDANCE    = 35    # ADX > 35 → marché en tendance forte
-V8_ATR_VOLATILE    = 3.0   # ATR% > 3% → marché très volatile
-V8_SCAN_INTERVAL   = 3600  # Scan du régime toutes les heures
-
-# Telegram
-TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-
-# État du régime actuel
-regime_actuel = {
-    "mode": "RANGE",        # RANGE | TENDANCE | VOLATILE
-    "mise_pct": 0.20,       # Mise ajustée selon le régime
-    "rsi_achat": 30,        # RSI ajusté selon le régime
-    "rsi_vente": 70,        # RSI ajusté selon le régime
-    "derniere_maj": 0       # Timestamp de la dernière mise à jour
-}
-
-def detecter_regime():
-    """
-    Analyse le marché global pour détecter le régime actuel.
-    Calcule ADX et ATR moyens sur BTC + ETH (marchés de référence).
-    """
-    adx_values = []
-    atr_pct_values = []
-
-    for symbole in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
-        df = get_klines(symbole, limite=50)
-        if df is None or len(df) < 20:
-            continue
-        try:
-            adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
-            atr_ind = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
-            adx_val = float(adx_ind.adx().iloc[-1])
-            atr_val = float(atr_ind.average_true_range().iloc[-1])
-            prix    = float(df['close'].iloc[-1])
-            atr_pct = (atr_val / prix) * 100
-            if not pd.isna(adx_val):
-                adx_values.append(adx_val)
-            if not pd.isna(atr_pct):
-                atr_pct_values.append(atr_pct)
-        except:
-            pass
-        time.sleep(0.5)
-
-    if not adx_values:
-        return
-
-    adx_moyen = sum(adx_values) / len(adx_values)
-    atr_moyen = sum(atr_pct_values) / len(atr_pct_values) if atr_pct_values else 0
-
-    ancien_mode = regime_actuel["mode"]
-
-    # Détection du régime
-    if atr_moyen > V8_ATR_VOLATILE:
-        # Marché très volatile → réduire la mise pour protéger le capital
-        regime_actuel["mode"]      = "VOLATILE"
-        regime_actuel["mise_pct"]  = 0.10    # 10% au lieu de 20%
-        regime_actuel["rsi_achat"] = 30      # RSI inchangé
-        regime_actuel["rsi_vente"] = 70
-
-    elif adx_moyen > V8_ADX_TENDANCE:
-        # Marché en tendance forte → RSI plus strict pour éviter faux signaux
-        regime_actuel["mode"]      = "TENDANCE"
-        regime_actuel["mise_pct"]  = 0.20    # Mise inchangée
-        regime_actuel["rsi_achat"] = 25      # Plus strict : RSI < 25
-        regime_actuel["rsi_vente"] = 75      # Plus strict : RSI > 75
-
-    else:
-        # Marché en range → paramètres normaux V7.3
-        regime_actuel["mode"]      = "RANGE"
-        regime_actuel["mise_pct"]  = 0.20    # Mise normale
-        regime_actuel["rsi_achat"] = 30      # RSI normal
-        regime_actuel["rsi_vente"] = 70
-
-    regime_actuel["derniere_maj"] = int(time.time())
-
-    log.info(f"\n  {'='*55}")
-    log.info(f"  [V8] RÉGIME DÉTECTÉ : {regime_actuel['mode']}")
-    log.info(f"  ADX moyen : {round(adx_moyen,1)} | ATR moyen : {round(atr_moyen,2)}%")
-    log.info(f"  Mise : {regime_actuel['mise_pct']*100}% | "
-             f"RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}")
-    log.info(f"  {'='*55}")
-
-    # Notification Telegram si changement de régime
-    if ancien_mode != regime_actuel["mode"]:
-        emoji = "📊" if regime_actuel["mode"] == "RANGE" else \
-                "⚡" if regime_actuel["mode"] == "VOLATILE" else "📈"
-        telegram(f"{emoji} <b>CHANGEMENT DE RÉGIME</b>\n"
-                 f"{ancien_mode} → <b>{regime_actuel['mode']}</b>\n"
-                 f"ADX : {round(adx_moyen,1)} | ATR : {round(atr_moyen,2)}%\n"
-                 f"Mise : {regime_actuel['mise_pct']*100}% | "
-                 f"RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}")
-        log.info(f"  [V8] Changement : {ancien_mode} → {regime_actuel['mode']} !")
+log.info("=" * 55)
+log.info("  BOT MEAN REVERSION V8 — ADAPTATIF")
+log.info(f"  Capital : {CAPITAL_INITIAL}EUR | Levier x{LEVIER} | Mise {MISE_FIXE_PCT*100}%")
+log.info(f"  RSI < {RSI_ACHAT} → ACHAT | RSI > {RSI_VENTE} → VENTE")
+log.info(f"  Stop ATR×{ATR_MULTIPLIER} | Ratio 1:{RATIO_RR}")
+log.info(f"  Trailing Stop : {len(TRAILING_NIVEAUX)-1} niveaux progressifs")
+log.info(f"  Marchés : {len(MARCHES)} cryptos validés")
+log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
+log.info("=" * 55)
 
 # ══════════════════════════════════════════════════════════════
-# TELEGRAM — IDENTIQUE V7.3
+# TELEGRAM
 # ══════════════════════════════════════════════════════════════
 
 def telegram(message):
@@ -211,7 +145,7 @@ def telegram(message):
         log.error(f"Erreur Telegram : {e}")
 
 # ══════════════════════════════════════════════════════════════
-# DONNÉES — IDENTIQUE V7.3
+# DONNÉES
 # ══════════════════════════════════════════════════════════════
 
 def get_prix_actuel(symbole):
@@ -256,7 +190,7 @@ def get_klines(symbole, limite=100):
         return None
 
 # ══════════════════════════════════════════════════════════════
-# INDICATEURS — IDENTIQUE V7.3
+# INDICATEURS
 # ══════════════════════════════════════════════════════════════
 
 def calculer_adx(df, periode=14):
@@ -293,13 +227,133 @@ def verifier_volume(df):
     return ratio >= VOLUME_MINI, round(ratio * 100, 1)
 
 # ══════════════════════════════════════════════════════════════
-# ANALYSE — V7.3 + utilise les paramètres V8
+# V8 — DÉTECTION DU RÉGIME
+# ══════════════════════════════════════════════════════════════
+
+def detecter_regime():
+    adx_values   = []
+    atr_pct_vals = []
+
+    for symbole in ["BTCUSDT", "ETHUSDT", "LINKUSDT"]:
+        df = get_klines(symbole, limite=50)
+        if df is None or len(df) < 20:
+            continue
+        try:
+            adx_val = float(ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx().iloc[-1])
+            atr_val = float(AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range().iloc[-1])
+            prix    = float(df['close'].iloc[-1])
+            atr_pct = (atr_val / prix) * 100
+            if not pd.isna(adx_val):
+                adx_values.append(adx_val)
+            if not pd.isna(atr_pct):
+                atr_pct_vals.append(atr_pct)
+        except:
+            pass
+        time.sleep(0.5)
+
+    if not adx_values:
+        return
+
+    adx_moyen = sum(adx_values) / len(adx_values)
+    atr_moyen = sum(atr_pct_vals) / len(atr_pct_vals) if atr_pct_vals else 0
+    ancien_mode = regime_actuel["mode"]
+
+    if atr_moyen > V8_ATR_VOLATILE:
+        regime_actuel["mode"]      = "VOLATILE"
+        regime_actuel["mise_pct"]  = 0.10
+        regime_actuel["rsi_achat"] = 30
+        regime_actuel["rsi_vente"] = 70
+    elif adx_moyen > V8_ADX_TENDANCE:
+        regime_actuel["mode"]      = "TENDANCE"
+        regime_actuel["mise_pct"]  = 0.20
+        regime_actuel["rsi_achat"] = 25
+        regime_actuel["rsi_vente"] = 75
+    else:
+        regime_actuel["mode"]      = "RANGE"
+        regime_actuel["mise_pct"]  = 0.20
+        regime_actuel["rsi_achat"] = 30
+        regime_actuel["rsi_vente"] = 70
+
+    regime_actuel["derniere_maj"] = int(time.time())
+
+    log.info(f"\n  {'='*55}")
+    log.info(f"  [V8] REGIME : {regime_actuel['mode']}")
+    log.info(f"  ADX moyen : {round(adx_moyen,1)} | ATR moyen : {round(atr_moyen,2)}%")
+    log.info(f"  Mise : {regime_actuel['mise_pct']*100}% | RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}")
+    log.info(f"  {'='*55}")
+
+    if ancien_mode != regime_actuel["mode"]:
+        telegram(
+            f"CHANGEMENT DE REGIME V8\n"
+            f"{ancien_mode} -> {regime_actuel['mode']}\n"
+            f"ADX : {round(adx_moyen,1)} | ATR : {round(atr_moyen,2)}%\n"
+            f"Mise : {regime_actuel['mise_pct']*100}% | RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}"
+        )
+
+# ══════════════════════════════════════════════════════════════
+# RAPPORT QUOTIDIEN
+# ══════════════════════════════════════════════════════════════
+
+def verifier_rapport_quotidien(etat):
+    maintenant  = dt.datetime.now()
+    aujourd_hui = maintenant.strftime('%Y-%m-%d')
+
+    if dernier_rapport["date"] == aujourd_hui:
+        return
+    if maintenant.hour != 0 or maintenant.minute >= 5:
+        return
+
+    dernier_rapport["date"] = aujourd_hui
+
+    trades_jour = [h for h in etat.get("historique", [])
+                   if h.get("heure", "").startswith(aujourd_hui)]
+
+    nb_jour   = len(trades_jour)
+    wins_jour = len([t for t in trades_jour if t.get("resultat") == "GAGNE"])
+    gain_jour = round(sum(t.get("gain", 0) for t in trades_jour), 2)
+    wr_jour   = round(wins_jour / nb_jour * 100, 1) if nb_jour > 0 else 0
+
+    if trades_jour:
+        meilleur     = max(trades_jour, key=lambda x: x.get("gain", 0))
+        pire         = min(trades_jour, key=lambda x: x.get("gain", 0))
+        meilleur_str = f"{meilleur['marche']} {'+' if meilleur['gain']>=0 else ''}{meilleur['gain']}EUR"
+        pire_str     = f"{pire['marche']} {'+' if pire['gain']>=0 else ''}{pire['gain']}EUR"
+    else:
+        meilleur_str = "Aucun trade"
+        pire_str     = "Aucun trade"
+
+    perf     = round((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100, 2)
+    gain_str = f"+{gain_jour}" if gain_jour >= 0 else str(gain_jour)
+    net_str  = f"+{round(etat['cumul_net'],2)}" if etat['cumul_net'] >= 0 else str(round(etat['cumul_net'],2))
+    perf_str = f"+{perf}" if perf >= 0 else str(perf)
+
+    log.info(f"\n  {'='*55}")
+    log.info(f"  RAPPORT QUOTIDIEN V8 — {aujourd_hui}")
+    log.info(f"  Trades : {nb_jour} | WR : {wr_jour}%")
+    log.info(f"  Gain jour : {gain_str}EUR")
+    log.info(f"  Capital : {round(etat['capital'],2)}EUR")
+    log.info(f"  {'='*55}")
+
+    telegram(
+        f"RAPPORT QUOTIDIEN V8 - {aujourd_hui}\n\n"
+        f"Trades : {nb_jour} | WR : {wr_jour}%\n"
+        f"Gain du jour : {gain_str}EUR\n"
+        f"Capital : {round(etat['capital'],2)}EUR\n\n"
+        f"Meilleur : {meilleur_str}\n"
+        f"Pire : {pire_str}\n"
+        f"Regime : {regime_actuel['mode']}\n\n"
+        f"NET total : {net_str}EUR\n"
+        f"Perf : {perf_str}%"
+    )
+
+# ══════════════════════════════════════════════════════════════
+# ANALYSE MEAN REVERSION
 # ══════════════════════════════════════════════════════════════
 
 def analyser_marche(symbole):
     df = get_klines(symbole, limite=100)
     if df is None or len(df) < 30:
-        log.warning(f"  {symbole} : données insuffisantes")
+        log.warning(f"  {symbole} : donnees insuffisantes")
         return "NEUTRE", {}
 
     adx = calculer_adx(df)
@@ -308,14 +362,14 @@ def analyser_marche(symbole):
 
     volume_ok, volume_ratio = verifier_volume(df)
     if not volume_ok:
-        log.info(f"  {symbole} : Volume {volume_ratio}% < {VOLUME_MINI*100}% → skip")
+        log.info(f"  {symbole} : Volume {volume_ratio}% < {VOLUME_MINI*100}% -> skip")
         return "NEUTRE", {}
 
     prix    = df['close'].iloc[-1]
     atr_pct = (atr / prix) * 100
 
     if adx > ADX_MAX:
-        log.info(f"  {symbole} : ADX {adx} > {ADX_MAX} → skip")
+        log.info(f"  {symbole} : ADX {adx} > {ADX_MAX} -> skip")
         return "NEUTRE", {}
 
     details = {
@@ -324,29 +378,21 @@ def analyser_marche(symbole):
         "df": df
     }
 
-    # Utilise les seuils RSI ajustés par V8
     rsi_achat = regime_actuel["rsi_achat"]
     rsi_vente = regime_actuel["rsi_vente"]
 
     if rsi < rsi_achat:
-        log.info(f"  {symbole} : RSI {rsi} < {rsi_achat} → SURVENDU → ACHAT ✅ "
-                 f"(ADX {adx} | Vol {volume_ratio}% | ATR {round(atr_pct,2)}%) "
-                 f"[Mode {regime_actuel['mode']}]")
+        log.info(f"  {symbole} : RSI {rsi} < {rsi_achat} -> SURVENDU -> ACHAT [Mode {regime_actuel['mode']}]")
         return "ACHAT", details
     elif rsi > rsi_vente:
-        log.info(f"  {symbole} : RSI {rsi} > {rsi_vente} → SURACHETÉ → VENTE ✅ "
-                 f"(ADX {adx} | Vol {volume_ratio}% | ATR {round(atr_pct,2)}%) "
-                 f"[Mode {regime_actuel['mode']}]")
+        log.info(f"  {symbole} : RSI {rsi} > {rsi_vente} -> SURACHETÉ -> VENTE [Mode {regime_actuel['mode']}]")
         return "VENTE", details
     else:
-        log.info(f"  {symbole} : RSI {rsi} | ADX {adx} → pas de signal")
+        log.info(f"  {symbole} : RSI {rsi} | ADX {adx} -> pas de signal")
         return "NEUTRE", details
 
 def choisir_meilleur_marche():
-    log.info(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan V8 — {len(MARCHES)} marchés "
-             f"[Mode : {regime_actuel['mode']} | "
-             f"Mise {regime_actuel['mise_pct']*100}% | "
-             f"RSI {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}]")
+    log.info(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan V8 — {len(MARCHES)} marches [Mode : {regime_actuel['mode']} | Mise {regime_actuel['mise_pct']*100}% | RSI {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}]")
     signaux = {}
 
     for marche in MARCHES:
@@ -378,13 +424,11 @@ def choisir_meilleur_marche():
     return meilleur, direction, signaux[meilleur]["details"]
 
 # ══════════════════════════════════════════════════════════════
-# KELLY — IDENTIQUE V7.3
+# KELLY
 # ══════════════════════════════════════════════════════════════
 
 def calculer_mise(capital, nb_trades, win_rate, avg_win_pct, avg_loss_pct):
-    # Utilise la mise ajustée par V8
     mise_pct = regime_actuel["mise_pct"]
-
     if nb_trades < MIN_TRADES_KELLY:
         mise = capital * mise_pct
     else:
@@ -403,7 +447,7 @@ def calculer_mise(capital, nb_trades, win_rate, avg_win_pct, avg_loss_pct):
     return round(mise, 2)
 
 # ══════════════════════════════════════════════════════════════
-# SIMULATION DU TRADE — IDENTIQUE V7.3
+# SIMULATION DU TRADE
 # ══════════════════════════════════════════════════════════════
 
 def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
@@ -434,23 +478,25 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
     log.info(f"  TRADE #{numero_trade} [V8-{regime_actuel['mode']}] — {datetime.now().strftime('%H:%M:%S')}")
     log.info(f"  {'='*50}")
     log.info(f"  Symbole          : {symbole} ({direction})")
-    log.info(f"  Régime V8        : {regime_actuel['mode']}")
+    log.info(f"  Regime V8        : {regime_actuel['mode']}")
     log.info(f"  RSI              : {details.get('rsi', 0)}")
     log.info(f"  Prix entree      : {prix_entree}")
-    log.info(f"  Stop ATR×{ATR_MULTIPLIER}     : {stop_loss} ({round(distance_stop_pct,2)}%)")
+    log.info(f"  Stop ATR x{ATR_MULTIPLIER}    : {stop_loss} ({round(distance_stop_pct,2)}%)")
     log.info(f"  Objectif partiel : {objectif_partiel}")
     log.info(f"  Objectif final   : {objectif_final}")
     log.info(f"  Mise             : {mise}EUR ({regime_actuel['mise_pct']*100}%) | Levier x{LEVIER}")
     log.info(f"  Trailing stop    : PROGRESSIF (9 niveaux)\n")
 
-    telegram(f"📊 <b>TRADE #{numero_trade} OUVERT [V8]</b>\n"
-             f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
-             f"Mode : {regime_actuel['mode']}\n"
-             f"RSI : {details.get('rsi', 0)}\n"
-             f"Prix : {prix_entree}\n"
-             f"Stop : {stop_loss} ({round(distance_stop_pct,2)}%)\n"
-             f"Objectif : {objectif_final}\n"
-             f"Mise : {mise}€ × x{LEVIER}")
+    telegram(
+        f"TRADE #{numero_trade} OUVERT [V8]\n"
+        f"{'ACHAT' if direction == 'ACHAT' else 'VENTE'} {symbole}\n"
+        f"Mode : {regime_actuel['mode']}\n"
+        f"RSI : {details.get('rsi', 0)}\n"
+        f"Prix : {prix_entree}\n"
+        f"Stop : {stop_loss} ({round(distance_stop_pct,2)}%)\n"
+        f"Objectif : {objectif_final}\n"
+        f"Mise : {mise}EUR x{LEVIER}"
+    )
 
     debut           = time.time()
     stop_actuel     = stop_loss
@@ -484,8 +530,7 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
             nouveau_stop = round(meilleur_prix - distance_trailing, 8)
             if nouveau_stop > stop_actuel:
                 if multiplicateur != niveau_actuel:
-                    log.info(f"  [TRAILING] PnL {'+' if pnl>=0 else ''}{pnl}€ → "
-                             f"ATR×{multiplicateur} | Stop : {nouveau_stop}")
+                    log.info(f"  [TRAILING] PnL {'+' if pnl>=0 else ''}{pnl}EUR -> ATR x{multiplicateur} | Stop : {nouveau_stop}")
                     niveau_actuel = multiplicateur
                 stop_actuel = nouveau_stop
             atteint_partiel = not partiel_execute and prix_actuel >= objectif_partiel
@@ -497,8 +542,7 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
             nouveau_stop = round(meilleur_prix + distance_trailing, 8)
             if nouveau_stop < stop_actuel:
                 if multiplicateur != niveau_actuel:
-                    log.info(f"  [TRAILING] PnL {'+' if pnl>=0 else ''}{pnl}€ → "
-                             f"ATR×{multiplicateur} | Stop : {nouveau_stop}")
+                    log.info(f"  [TRAILING] PnL {'+' if pnl>=0 else ''}{pnl}EUR -> ATR x{multiplicateur} | Stop : {nouveau_stop}")
                     niveau_actuel = multiplicateur
                 stop_actuel = nouveau_stop
             atteint_partiel = not partiel_execute and prix_actuel <= objectif_partiel
@@ -510,8 +554,8 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
         if time.time() - dernier_log >= 60:
             log.info(f"  [{datetime.now().strftime('%H:%M:%S')}] {symbole}: {prix_actuel} | "
                      f"PnL: {'+' if pnl >= 0 else ''}{pnl}EUR | "
-                     f"Stop: {stop_actuel} (ATR×{multiplicateur}) | {duree}min"
-                     f"{' | PARTIEL ✅' if partiel_execute else ''}")
+                     f"Stop: {stop_actuel} (ATR x{multiplicateur}) | {duree}min"
+                     f"{' | PARTIEL' if partiel_execute else ''}")
             dernier_log = time.time()
 
         trade_info = {
@@ -525,16 +569,15 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
         if atteint_partiel:
             gain_partiel    = round(pnl * 0.5, 2)
             partiel_execute = True
-            log.info(f"  SORTIE PARTIELLE 50% ! +{gain_partiel}EUR ✅")
-            telegram(f"⚡ <b>SORTIE PARTIELLE</b>\n{symbole} | +{gain_partiel}€ sécurisés")
+            log.info(f"  SORTIE PARTIELLE 50% ! +{gain_partiel}EUR")
+            telegram(f"SORTIE PARTIELLE\n{symbole} | +{gain_partiel}EUR securises")
             continue
 
         if atteint_final:
             gain_final = round(pnl * 0.5, 2) if partiel_execute else pnl
             gain_total = round(gain_partiel + gain_final, 2)
-            log.info(f"\n  OBJECTIF FINAL ! Total: +{gain_total}EUR 🎉")
-            telegram(f"🎯 <b>OBJECTIF ATTEINT !</b>\n{symbole} {direction}\n"
-                     f"Gain : <b>+{gain_total}€</b>\nDurée : {duree} min")
+            log.info(f"\n  OBJECTIF FINAL ! Total: +{gain_total}EUR")
+            telegram(f"OBJECTIF ATTEINT [V8]\n{symbole} {direction}\nGain : +{gain_total}EUR\nDuree : {duree} min")
             return "GAGNE", gain_total, mise, trade_info
 
         if atteint_stop:
@@ -542,14 +585,12 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
                 gain_reste = round(pnl * 0.5, 2)
                 gain_total = round(gain_partiel + gain_reste, 2)
                 resultat   = "GAGNE" if gain_total > 0 else "PERDU"
-                log.info(f"\n  STOP (après partiel) — {'+' if gain_total>=0 else ''}{gain_total}EUR")
-                telegram(f"🛑 <b>STOP (après partiel)</b>\n{symbole} | "
-                         f"{'+' if gain_total>=0 else ''}{gain_total}€\nDurée : {duree} min")
+                log.info(f"\n  STOP (apres partiel) — {'+' if gain_total>=0 else ''}{gain_total}EUR")
+                telegram(f"STOP apres partiel\n{symbole} | {'+' if gain_total>=0 else ''}{gain_total}EUR\nDuree : {duree} min")
                 return resultat, gain_total, mise, trade_info
             else:
                 log.info(f"\n  STOP-LOSS ! {pnl}EUR")
-                telegram(f"🛑 <b>STOP-LOSS</b>\n{symbole} {direction}\n"
-                         f"Perte : <b>{pnl}€</b>\nDurée : {duree} min")
+                telegram(f"STOP-LOSS [V8]\n{symbole} {direction}\nPerte : {pnl}EUR\nDuree : {duree} min")
                 return "PERDU", pnl, mise, trade_info
 
         if time.time() - debut >= TIMEOUT_TRADE:
@@ -560,18 +601,17 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
                 gain_total = pnl
             resultat = "GAGNE" if gain_total > 0 else "PERDU"
             log.info(f"\n  TIMEOUT — {'+' if gain_total>=0 else ''}{gain_total}EUR")
-            telegram(f"⏱ <b>TIMEOUT</b>\n{symbole} | {'+' if gain_total>=0 else ''}{gain_total}€\n"
-                     f"Durée : {duree} min")
+            telegram(f"TIMEOUT [V8]\n{symbole} | {'+' if gain_total>=0 else ''}{gain_total}EUR\nDuree : {duree} min")
             return resultat, gain_total, mise, trade_info
 
 # ══════════════════════════════════════════════════════════════
-# KILL SWITCH — IDENTIQUE V7.3
+# KILL SWITCH
 # ══════════════════════════════════════════════════════════════
 
 def verifier_kill_switch(etat, capital):
     if capital < CAPITAL_INITIAL * SEUIL_RUINE:
         log.critical(f"SEUIL DE RUINE ! Capital {capital}EUR")
-        telegram(f"🚨 <b>SEUIL DE RUINE !</b>\nCapital : {capital}€\nBot arrêté !")
+        telegram(f"SEUIL DE RUINE !\nCapital : {capital}EUR\nBot arrete !")
         return "RUINE"
 
     pause_until = etat.get("pause_until", 0)
@@ -583,7 +623,7 @@ def verifier_kill_switch(etat, capital):
 
     if etat["pertes_consecutives"] >= MAX_PERTES_CONSECUTIVES:
         log.warning(f"KILL SWITCH — pause 24h !")
-        telegram(f"⚠️ <b>KILL SWITCH</b>\n{MAX_PERTES_CONSECUTIVES} pertes consécutives\nPause 24h")
+        telegram(f"KILL SWITCH [V8]\n{MAX_PERTES_CONSECUTIVES} pertes consecutives\nPause 24h")
         etat["pause_until"]         = int(time.time()) + PAUSE_DUREE
         etat["pertes_consecutives"] = 0
         sauvegarder_etat(etat)
@@ -592,7 +632,7 @@ def verifier_kill_switch(etat, capital):
     return "OK"
 
 # ══════════════════════════════════════════════════════════════
-# TABLEAU DE BORD — IDENTIQUE V7.3 + infos V8
+# TABLEAU DE BORD
 # ══════════════════════════════════════════════════════════════
 
 def afficher_tableau_de_bord(etat):
@@ -601,8 +641,7 @@ def afficher_tableau_de_bord(etat):
     log.info(f"\n  {'='*55}")
     log.info(f"  BOT MEAN REVERSION V8 — TABLEAU DE BORD")
     log.info(f"  {'='*55}")
-    log.info(f"  Capital actuel : {round(etat['capital'],2)}EUR "
-             f"({'+' if perf >= 0 else ''}{round(perf,2)}%)")
+    log.info(f"  Capital actuel : {round(etat['capital'],2)}EUR ({'+' if perf>=0 else ''}{round(perf,2)}%)")
     log.info(f"  Trades total   : {etat['nb_trades']}")
     log.info(f"  Victoires      : {etat['nb_wins']} ({win_rate:.1f}%)")
     log.info(f"  Defaites       : {etat['nb_losses']}")
@@ -610,125 +649,60 @@ def afficher_tableau_de_bord(etat):
     log.info(f"  Kelly actif    : {'Non (<30 trades)' if etat['nb_trades'] < MIN_TRADES_KELLY else 'Oui'}")
     log.info(f"  Total gagne    : +{round(etat['total_gagne'],2)}EUR")
     log.info(f"  Total perdu    : -{round(etat['total_perdu'],2)}EUR")
-    log.info(f"  BENEFICE NET   : {'+' if etat['cumul_net'] >= 0 else ''}{round(etat['cumul_net'],2)}EUR")
-    log.info(f"  [V8] Régime    : {regime_actuel['mode']} | "
-             f"Mise {regime_actuel['mise_pct']*100}% | "
-             f"RSI {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}")
+    log.info(f"  BENEFICE NET   : {'+' if etat['cumul_net']>=0 else ''}{round(etat['cumul_net'],2)}EUR")
+    log.info(f"  [V8] Regime    : {regime_actuel['mode']} | Mise {regime_actuel['mise_pct']*100}% | RSI {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}")
     if etat.get("historique"):
         log.info(f"\n  Derniers trades :")
         for h in etat["historique"][-5:]:
             icone = "OK" if h["resultat"] == "GAGNE" else "XX"
-            log.info(f"    [{icone}] {h['heure']} | {h['marche']} | "
-                     f"{h['direction']} | "
-                     f"{'+' if h['gain'] >= 0 else ''}{h['gain']}EUR | "
-                     f"Capital: {h['capital']}EUR")
+            log.info(f"    [{icone}] {h['heure']} | {h['marche']} | {h['direction']} | {'+' if h['gain']>=0 else ''}{h['gain']}EUR | Capital: {h['capital']}EUR")
     log.info(f"  {'='*55}")
 
 def envoyer_rapport_telegram(etat):
     win_rate = (etat["nb_wins"] / etat["nb_trades"] * 100) if etat["nb_trades"] > 0 else 0
     perf     = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
-    telegram(f"📈 <b>RAPPORT BOT V8</b>\n"
-             f"Capital : <b>{round(etat['capital'],2)}€</b> ({'+' if perf>=0 else ''}{round(perf,2)}%)\n"
-             f"Trades : {etat['nb_trades']} | WR : {round(win_rate,1)}%\n"
-             f"Gagné : +{round(etat['total_gagne'],2)}€\n"
-             f"Perdu : -{round(etat['total_perdu'],2)}€\n"
-             f"<b>NET : {'+' if etat['cumul_net']>=0 else ''}{round(etat['cumul_net'],2)}€</b>\n"
-             f"Mode V8 : {regime_actuel['mode']}")
-
-def verifier_rapport_quotidien(etat):
-    """Envoie un rapport quotidien automatique à minuit."""
-    maintenant = dt.datetime.now()
-    aujourd_hui = maintenant.strftime('%Y-%m-%d')
-
-    if dernier_rapport["date"] == aujourd_hui:
-        return
-
-    if maintenant.hour == 0 and maintenant.minute < 5:
-        dernier_rapport["date"] = aujourd_hui
-
-        # Trades du jour
-        trades_jour = [h for h in etat.get("historique", [])
-                      if h.get("heure", "").startswith(aujourd_hui)]
-
-        nb_jour      = len(trades_jour)
-        wins_jour    = len([t for t in trades_jour if t.get("resultat") == "GAGNE"])
-        gain_jour    = sum(t.get("gain", 0) for t in trades_jour)
-        wr_jour      = (wins_jour / nb_jour * 100) if nb_jour > 0 else 0
-
-        # Meilleur et pire marché du jour
-        if trades_jour:
-            meilleur = max(trades_jour, key=lambda x: x.get("gain", 0))
-            pire     = min(trades_jour, key=lambda x: x.get("gain", 0))
-            meilleur_str = f"{meilleur['marche']} {'+' if meilleur['gain']>=0 else ''}{meilleur['gain']}€"
-            pire_str     = f"{pire['marche']} {'+' if pire['gain']>=0 else ''}{pire['gain']}€"
-        else:
-            meilleur_str = "—"
-            pire_str     = "—"
-
-        perf = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
-
-        gain_jour_str = f"+{round(gain_jour,2)}" if gain_jour >= 0 else str(round(gain_jour,2))
-        net_str       = f"+{round(etat['cumul_net'],2)}" if etat['cumul_net'] >= 0 else str(round(etat['cumul_net'],2))
-        perf_str      = f"+{round(perf,2)}" if perf >= 0 else str(round(perf,2))
-        message = (
-            f"📊 <b>RAPPORT QUOTIDIEN V8</b>\n"
-            f"Date : {aujourd_hui}\n\n"
-            f"Trades : {nb_jour} | WR : {round(wr_jour,1)}%\n"
-            f"Gains du jour : {gain_jour_str}EUR\n"
-            f"Capital : {round(etat['capital'],2)}EUR\n\n"
-            f"Meilleur : {meilleur_str}\n"
-            f"Pire : {pire_str}\n"
-            f"Regime : {regime_actuel['mode']}\n\n"
-            f"NET depuis depart : {net_str}EUR\n"
-            f"Perf totale : {perf_str}%"
-        )
-
-        log.info(f"\n  {'='*55}")
-        log.info(f"  RAPPORT QUOTIDIEN — {aujourd_hui}")
-        log.info(f"  Trades : {nb_jour} | WR : {round(wr_jour,1)}%")
-        log.info(f"  Gain jour : {gain_jour_str}EUR")
-        log.info(f"  Capital : {round(etat['capital'],2)}EUR")
-        log.info(f"  {'='*55}")
-
-        telegram(message)
+    net_str  = f"+{round(etat['cumul_net'],2)}" if etat['cumul_net'] >= 0 else str(round(etat['cumul_net'],2))
+    perf_str = f"+{round(perf,2)}" if perf >= 0 else str(round(perf,2))
+    telegram(
+        f"RAPPORT BOT V8\n"
+        f"Capital : {round(etat['capital'],2)}EUR ({perf_str}%)\n"
+        f"Trades : {etat['nb_trades']} | WR : {round(win_rate,1)}%\n"
+        f"Gagne : +{round(etat['total_gagne'],2)}EUR\n"
+        f"Perdu : -{round(etat['total_perdu'],2)}EUR\n"
+        f"NET : {net_str}EUR\n"
+        f"Mode V8 : {regime_actuel['mode']}"
+    )
 
 # ══════════════════════════════════════════════════════════════
 # BOUCLE PRINCIPALE
 # ══════════════════════════════════════════════════════════════
 
 def demarrer_bot():
-    log.info("=" * 55)
-    log.info("  BOT MEAN REVERSION V8 — ADAPTATIF")
-    log.info(f"  Capital : {CAPITAL_INITIAL}EUR | Levier x{LEVIER}")
-    log.info(f"  Base V7.3 + Détection régime automatique")
-    log.info(f"  Scan régime toutes les {V8_SCAN_INTERVAL//60} minutes")
-    log.info(f"  Telegram : {'✅ ON' if TELEGRAM_TOKEN else '❌ OFF'}")
-    log.info("=" * 55)
+    log.info(f"DEMARRAGE BOT MEAN REVERSION V8 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     init_database()
     etat = charger_etat()
 
-    # Premier scan du régime au démarrage
-    log.info("  [V8] Analyse initiale du régime de marché...")
+    log.info("  [V8] Analyse initiale du regime de marche...")
     detecter_regime()
-
     afficher_tableau_de_bord(etat)
 
-    telegram(f"🚀 <b>BOT V8 DÉMARRÉ</b>\n"
-             f"Capital : {round(etat['capital'],2)}€\n"
-             f"Régime initial : {regime_actuel['mode']}\n"
-             f"Mise : {regime_actuel['mise_pct']*100}% | "
-             f"RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}\n"
-             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    telegram(
+        f"BOT V8 DEMARRE\n"
+        f"Capital : {round(etat['capital'],2)}EUR\n"
+        f"Regime : {regime_actuel['mode']}\n"
+        f"Mise : {regime_actuel['mise_pct']*100}% | RSI : {regime_actuel['rsi_achat']}/{regime_actuel['rsi_vente']}\n"
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
     while True:
         try:
-            # Vérifier si on doit rafraîchir le régime (toutes les heures)
+            verifier_rapport_quotidien(etat)
+
             if time.time() - regime_actuel["derniere_maj"] >= V8_SCAN_INTERVAL:
-                log.info("  [V8] Mise à jour du régime de marché...")
+                log.info("  [V8] Mise a jour du regime de marche...")
                 detecter_regime()
 
-            verifier_rapport_quotidien(etat)
             statut = verifier_kill_switch(etat, etat["capital"])
             if statut == "RUINE":
                 break
@@ -767,9 +741,7 @@ def demarrer_bot():
                 if etat["avg_win_pct"] == 0:
                     etat["avg_win_pct"] = gain_pct
                 else:
-                    etat["avg_win_pct"] = round(
-                        (etat["avg_win_pct"] * (etat["nb_wins"]-1) + gain_pct) / etat["nb_wins"], 4
-                    )
+                    etat["avg_win_pct"] = round((etat["avg_win_pct"] * (etat["nb_wins"]-1) + gain_pct) / etat["nb_wins"], 4)
             else:
                 etat["nb_losses"]          += 1
                 etat["total_perdu"]         = round(etat["total_perdu"] + abs(gain), 2)
@@ -778,9 +750,7 @@ def demarrer_bot():
                 if etat["avg_loss_pct"] == 0:
                     etat["avg_loss_pct"] = perte_pct
                 else:
-                    etat["avg_loss_pct"] = round(
-                        (etat["avg_loss_pct"] * (etat["nb_losses"]-1) + perte_pct) / etat["nb_losses"], 4
-                    )
+                    etat["avg_loss_pct"] = round((etat["avg_loss_pct"] * (etat["nb_losses"]-1) + perte_pct) / etat["nb_losses"], 4)
 
             enregistrer_trade({
                 'marche':        symbole,
