@@ -102,6 +102,10 @@ V8_ADX_TENDANCE    = 35    # ADX > 35 → marché en tendance forte
 V8_ATR_VOLATILE    = 3.0   # ATR% > 3% → marché très volatile
 V8_SCAN_INTERVAL   = 3600  # Scan du régime toutes les heures
 
+# Telegram
+TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
 # État du régime actuel
 regime_actuel = {
     "mode": "RANGE",        # RANGE | TENDANCE | VOLATILE
@@ -193,7 +197,17 @@ def detecter_regime():
 # ══════════════════════════════════════════════════════════════
 
 def telegram(message):
-    pass  # Telegram désactivé sur Bot 3
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }, timeout=10)
+    except Exception as e:
+        log.error(f"Erreur Telegram : {e}")
 
 # ══════════════════════════════════════════════════════════════
 # DONNÉES — IDENTIQUE V7.3
@@ -620,6 +634,63 @@ def envoyer_rapport_telegram(etat):
              f"<b>NET : {'+' if etat['cumul_net']>=0 else ''}{round(etat['cumul_net'],2)}€</b>\n"
              f"Mode V8 : {regime_actuel['mode']}")
 
+def verifier_rapport_quotidien(etat):
+    """Envoie un rapport quotidien automatique à minuit."""
+    maintenant = dt.datetime.now()
+    aujourd_hui = maintenant.strftime('%Y-%m-%d')
+
+    if dernier_rapport["date"] == aujourd_hui:
+        return
+
+    if maintenant.hour == 0 and maintenant.minute < 5:
+        dernier_rapport["date"] = aujourd_hui
+
+        # Trades du jour
+        trades_jour = [h for h in etat.get("historique", [])
+                      if h.get("heure", "").startswith(aujourd_hui)]
+
+        nb_jour      = len(trades_jour)
+        wins_jour    = len([t for t in trades_jour if t.get("resultat") == "GAGNE"])
+        gain_jour    = sum(t.get("gain", 0) for t in trades_jour)
+        wr_jour      = (wins_jour / nb_jour * 100) if nb_jour > 0 else 0
+
+        # Meilleur et pire marché du jour
+        if trades_jour:
+            meilleur = max(trades_jour, key=lambda x: x.get("gain", 0))
+            pire     = min(trades_jour, key=lambda x: x.get("gain", 0))
+            meilleur_str = f"{meilleur['marche']} {'+' if meilleur['gain']>=0 else ''}{meilleur['gain']}€"
+            pire_str     = f"{pire['marche']} {'+' if pire['gain']>=0 else ''}{pire['gain']}€"
+        else:
+            meilleur_str = "—"
+            pire_str     = "—"
+
+        perf = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
+
+        gain_jour_str = f"+{round(gain_jour,2)}" if gain_jour >= 0 else str(round(gain_jour,2))
+        net_str       = f"+{round(etat['cumul_net'],2)}" if etat['cumul_net'] >= 0 else str(round(etat['cumul_net'],2))
+        perf_str      = f"+{round(perf,2)}" if perf >= 0 else str(round(perf,2))
+        message = (
+            f"📊 <b>RAPPORT QUOTIDIEN V8</b>\n"
+            f"Date : {aujourd_hui}\n\n"
+            f"Trades : {nb_jour} | WR : {round(wr_jour,1)}%\n"
+            f"Gains du jour : {gain_jour_str}EUR\n"
+            f"Capital : {round(etat['capital'],2)}EUR\n\n"
+            f"Meilleur : {meilleur_str}\n"
+            f"Pire : {pire_str}\n"
+            f"Regime : {regime_actuel['mode']}\n\n"
+            f"NET depuis depart : {net_str}EUR\n"
+            f"Perf totale : {perf_str}%"
+        )
+
+        log.info(f"\n  {'='*55}")
+        log.info(f"  RAPPORT QUOTIDIEN — {aujourd_hui}")
+        log.info(f"  Trades : {nb_jour} | WR : {round(wr_jour,1)}%")
+        log.info(f"  Gain jour : {gain_jour_str}EUR")
+        log.info(f"  Capital : {round(etat['capital'],2)}EUR")
+        log.info(f"  {'='*55}")
+
+        telegram(message)
+
 # ══════════════════════════════════════════════════════════════
 # BOUCLE PRINCIPALE
 # ══════════════════════════════════════════════════════════════
@@ -630,7 +701,7 @@ def demarrer_bot():
     log.info(f"  Capital : {CAPITAL_INITIAL}EUR | Levier x{LEVIER}")
     log.info(f"  Base V7.3 + Détection régime automatique")
     log.info(f"  Scan régime toutes les {V8_SCAN_INTERVAL//60} minutes")
-    log.info(f"  Telegram : ❌ OFF (désactivé)")
+    log.info(f"  Telegram : {'✅ ON' if TELEGRAM_TOKEN else '❌ OFF'}")
     log.info("=" * 55)
 
     init_database()
@@ -656,6 +727,7 @@ def demarrer_bot():
                 log.info("  [V8] Mise à jour du régime de marché...")
                 detecter_regime()
 
+            verifier_rapport_quotidien(etat)
             statut = verifier_kill_switch(etat, etat["capital"])
             if statut == "RUINE":
                 break
