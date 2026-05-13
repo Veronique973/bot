@@ -1,12 +1,13 @@
+```python
 """
-Gestion PostgreSQL — Bot Trading
-Compatible Bot 1 V7.3 et Bot 3 V8
+Gestion PostgreSQL - Bot Trading
 """
 
 import pg8000
 import os
 import json
 import logging
+import re
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -15,10 +16,8 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 def get_connection():
     try:
-        import re
         url = DATABASE_URL
-        # Parse DATABASE_URL
-        pattern = r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)'
+        pattern = r'postgres(?:ql)?://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)'
         match = re.match(pattern, url)
         if not match:
             raise Exception(f"URL invalide : {url}")
@@ -39,12 +38,11 @@ def get_connection():
 def init_database():
     conn = get_connection()
     if conn is None:
-        log.warning("PostgreSQL non disponible — mode JSON")
+        log.warning("PostgreSQL non disponible - mode JSON")
         return
+    cursor = None
     try:
         cursor = conn.cursor()
-
-        # Table état du bot
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bot_state (
                 id INTEGER PRIMARY KEY DEFAULT 1,
@@ -64,8 +62,6 @@ def init_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-
-        # Table historique des trades
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS trade_history (
                 id SERIAL PRIMARY KEY,
@@ -87,34 +83,36 @@ def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-
-        # Insérer l'état initial si pas encore présent
         cursor.execute('SELECT COUNT(*) FROM bot_state')
         count = cursor.fetchone()[0]
         if count == 0:
             cursor.execute('INSERT INTO bot_state (id) VALUES (1)')
-
         conn.commit()
-        cursor.close()
-        conn.close()
         log.info("Base PostgreSQL initialisee")
     except Exception as e:
         log.error(f"Erreur init database : {e}")
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def charger_etat():
     conn = get_connection()
     if conn is None:
         return _etat_defaut()
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM bot_state WHERE id = 1')
         row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
         if row is None:
             return _etat_defaut()
-
         colonnes = [
             'id', 'capital', 'cumul_net', 'total_gagne', 'total_perdu',
             'nb_trades', 'nb_wins', 'nb_losses', 'nb_skips',
@@ -122,17 +120,27 @@ def charger_etat():
             'pause_until', 'historique', 'updated_at'
         ]
         etat = dict(zip(colonnes, row))
-        etat['historique'] = json.loads(etat.get('historique', '[]'))
+        etat['historique'] = json.loads(etat.get('historique') or '[]')
         return etat
-
     except Exception as e:
-        log.error(f"Erreur chargement état : {e}")
+        log.error(f"Erreur chargement etat : {e}")
         return _etat_defaut()
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def sauvegarder_etat(etat):
     conn = get_connection()
     if conn is None:
         return
+    cursor = None
     try:
         cursor = conn.cursor()
         historique_json = json.dumps(etat.get('historique', [])[-20:], ensure_ascii=False)
@@ -165,15 +173,24 @@ def sauvegarder_etat(etat):
             datetime.now()
         ))
         conn.commit()
-        cursor.close()
-        conn.close()
     except Exception as e:
-        log.error(f"Erreur sauvegarde état : {e}")
+        log.error(f"Erreur sauvegarde etat : {e}")
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def enregistrer_trade(trade):
     conn = get_connection()
     if conn is None:
         return
+    cursor = None
     try:
         cursor = conn.cursor()
         cursor.execute('''
@@ -193,10 +210,18 @@ def enregistrer_trade(trade):
             trade.get('atr'), trade.get('rsi')
         ))
         conn.commit()
-        cursor.close()
-        conn.close()
     except Exception as e:
         log.error(f"Erreur enregistrement trade : {e}")
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def _etat_defaut():
     return {
@@ -214,3 +239,4 @@ def _etat_defaut():
         'pause_until': 0,
         'historique': []
     }
+```
