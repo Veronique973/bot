@@ -1,4 +1,3 @@
-```python
 """
 Gestion PostgreSQL - Bot Trading
 """
@@ -239,4 +238,3 @@ def _etat_defaut():
         'pause_until': 0,
         'historique': []
     }
-```
