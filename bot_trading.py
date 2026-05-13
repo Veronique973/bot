@@ -1,6 +1,4 @@
-```python
-"""
-BOT MEAN REVERSION V8 - ADAPTATIF
+"""BOT MEAN REVERSION V8 - ADAPTATIF
 Base : V7.3 corrige + detection regime
 Trailing Stop CONTINU | Paliers : +0.75€, +3€, +7.50€...
 """
@@ -539,4 +537,3 @@ def demarrer_bot():
 
 if __name__ == "__main__":
     demarrer_bot()
-```
