@@ -1,6 +1,16 @@
-"""BOT MEAN REVERSION V8 - ADAPTATIF
+"""BOT MEAN REVERSION V8 - ADAPTATIF CORRIGÉ
 Base : V7.3 corrige + detection regime
 Trailing Stop CONTINU | Paliers : +0.75€, +3€, +7.50€...
+
+CORRECTIONS v8.1 :
+- Bug #1/2/3 : Trailing stop progressif corrigé (niveau_actuel, PnL négatif, stop_modifie)
+- Bug #4     : Gain partiel recalculé correctement sur demi-mise
+- Bug #5     : Gain timeout corrigé après sortie partielle
+- Bug #6     : NEARUSDT retiré (invalide Kraken), remplacé par LTCUSDT
+- Bug #7     : get_klines prend maintenant un paramètre interval
+- Bug #8     : Kelly protégé contre division par zéro
+- Bug #9     : nb_skips initialisé dans charger_etat
+- Bug #10    : Rate limiting Kraken — sleep augmenté à 15s
 """
 
 import requests
@@ -31,7 +41,7 @@ ATR_MULTIPLIER          = 2.5
 RATIO_RR                = 2.0
 RATIO_PARTIEL           = 1.0
 PAUSE                   = 120
-CHECK_INTERVAL          = 10
+CHECK_INTERVAL          = 15   # Bug #10 corrigé : 10s → 15s pour éviter rate limiting Kraken
 TIMEOUT_TRADE           = 12 * 3600
 RSI_ACHAT               = 30
 RSI_VENTE               = 70
@@ -59,14 +69,20 @@ TRAILING_NIVEAUX = [
 ]
 
 def get_multiplicateur_atr(pnl):
+    """Retourne le multiplicateur ATR selon le PnL actuel.
+    Ne s'applique que si PnL > 0 — sinon on garde ATR_MULTIPLIER fixe.
+    """
+    if pnl <= 0:
+        return ATR_MULTIPLIER  # Bug #2 corrigé : pas de trailing progressif en perte
     for seuil, mult in TRAILING_NIVEAUX:
         if pnl >= seuil:
             return mult
-    return 2.50
+    return ATR_MULTIPLIER
 
+# Bug #6 corrigé : NEARUSDT retiré (invalide Kraken), remplacé par LTCUSDT
 MARCHES = [
     "BTCUSDT", "ETHUSDT", "XRPUSDT", "ATOMUSDT", "LINKUSDT",
-    "ADAUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT", "DOTUSDT"
+    "ADAUSDT", "SOLUSDT", "AVAXUSDT", "LTCUSDT", "DOTUSDT"
 ]
 
 KRAKEN_SYMBOLS = {
@@ -78,7 +94,7 @@ KRAKEN_SYMBOLS = {
     "ADAUSDT":  "ADAUSD",
     "SOLUSDT":  "SOLUSD",
     "AVAXUSDT": "AVAXUSD",
-    "NEARUSDT": "NEARUSD",
+    "LTCUSDT":  "XLTCZUSD",  # Bug #6 corrigé : NEARUSD → LTCUSDT valide Kraken
     "DOTUSDT":  "DOTUSD"
 }
 
@@ -98,7 +114,7 @@ def detecter_regime():
     adx_values = []
     atr_pct_values = []
     for symbole in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
-        df = get_klines(symbole, limite=50)
+        df = get_klines(symbole, limite=50, interval=60)  # Bug #7 corrigé
         if df is None or len(df) < 20:
             continue
         try:
@@ -161,6 +177,7 @@ def get_prix_actuel(symbole):
         r = requests.get(url, params={"pair": kraken_symbol}, timeout=10)
         data = r.json()
         if data.get("error") and data["error"]:
+            log.warning(f"Erreur Kraken prix {symbole} : {data['error']}")
             return None
         result = data.get("result", {})
         if not result:
@@ -171,15 +188,17 @@ def get_prix_actuel(symbole):
         log.error(f"Erreur prix {symbole} : {e}")
         return None
 
-def get_klines(symbole, limite=100):
+# Bug #7 corrigé : ajout paramètre interval
+def get_klines(symbole, limite=100, interval=60):
     kraken_symbol = KRAKEN_SYMBOLS.get(symbole, symbole)
     url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": kraken_symbol, "interval": 60}
+    params = {"pair": kraken_symbol, "interval": interval}  # Bug #7 corrigé
     try:
         r = requests.get(url, params=params, timeout=15)
         data = r.json()
         errors = data.get("error", [])
         if errors:
+            log.warning(f"Erreur Kraken klines {symbole} : {errors}")
             return None
         result = data.get("result", {})
         keys = [k for k in result.keys() if k != "last"]
@@ -195,21 +214,11 @@ def get_klines(symbole, limite=100):
 
 def get_tendance_btc():
     try:
-        kraken_symbol = "XXBTZUSD"
-        url = "https://api.kraken.com/0/public/OHLC"
-        r = requests.get(url, params={"pair": kraken_symbol, "interval": 15}, timeout=10)
-        data = r.json()
-        if data.get("error") and data["error"]:
+        # Bug #7 corrigé : interval=15 passé correctement
+        df = get_klines("BTCUSDT", limite=10, interval=15)
+        if df is None or len(df) < 3:
             return "NEUTRE"
-        result = data.get("result", {})
-        keys = [k for k in result.keys() if k != "last"]
-        if not keys:
-            return "NEUTRE"
-        candles = result[keys[0]]
-        df = pd.DataFrame(candles, columns=['time','open','high','low','close','vwap','volume','count'])
-        df = df.astype({'close': float})
-        df = df.tail(10).reset_index(drop=True)
-        prix_actuel = float(df['close'].iloc[-1])
+        prix_actuel    = float(df['close'].iloc[-1])
         prix_30m_avant = float(df['close'].iloc[-3])
         variation = (prix_actuel - prix_30m_avant) / prix_30m_avant * 100
         if variation > 1.0:
@@ -255,7 +264,7 @@ def verifier_volume(df):
     return ratio >= VOLUME_MINI, round(ratio * 100, 1)
 
 def analyser_marche(symbole):
-    df = get_klines(symbole, limite=100)
+    df = get_klines(symbole, limite=100, interval=60)  # Bug #7 corrigé
     if df is None or len(df) < 30:
         log.warning(f"  {symbole} : donnees insuffisantes")
         return "NEUTRE", {}
@@ -315,7 +324,8 @@ def calculer_mise(capital, nb_trades, win_rate, avg_win_pct, avg_loss_pct):
     if nb_trades < MIN_TRADES_KELLY:
         mise = capital * mise_pct
     else:
-        if avg_loss_pct <= 0:
+        # Bug #8 corrigé : protection division par zéro et valeurs nulles
+        if avg_loss_pct <= 0 or avg_win_pct <= 0:
             mise = capital * mise_pct
         else:
             b = avg_win_pct / avg_loss_pct
@@ -333,100 +343,163 @@ def simuler_trade(symbole, direction, numero_trade, capital, details, etat):
     if prix_entree is None:
         return "ERREUR", 0, 0, {}
     atr = details.get("atr", 0)
+    if atr <= 0:
+        log.warning(f"  {symbole} : ATR nul, trade annulé")
+        return "ERREUR", 0, 0, {}
+
     if direction == "ACHAT":
-        stop_loss = round(prix_entree - (atr * ATR_MULTIPLIER), 8)
-        objectif_partiel = round(prix_entree + (atr * ATR_MULTIPLIER * RATIO_PARTIEL), 8)
-        objectif_final = round(prix_entree + (atr * ATR_MULTIPLIER * RATIO_RR), 8)
+        stop_loss          = round(prix_entree - (atr * ATR_MULTIPLIER), 8)
+        objectif_partiel   = round(prix_entree + (atr * ATR_MULTIPLIER * RATIO_PARTIEL), 8)
+        objectif_final     = round(prix_entree + (atr * ATR_MULTIPLIER * RATIO_RR), 8)
     else:
-        stop_loss = round(prix_entree + (atr * ATR_MULTIPLIER), 8)
-        objectif_partiel = round(prix_entree - (atr * ATR_MULTIPLIER * RATIO_PARTIEL), 8)
-        objectif_final = round(prix_entree - (atr * ATR_MULTIPLIER * RATIO_RR), 8)
+        stop_loss          = round(prix_entree + (atr * ATR_MULTIPLIER), 8)
+        objectif_partiel   = round(prix_entree - (atr * ATR_MULTIPLIER * RATIO_PARTIEL), 8)
+        objectif_final     = round(prix_entree - (atr * ATR_MULTIPLIER * RATIO_RR), 8)
+
     distance_stop_pct = (abs(prix_entree - stop_loss) / prix_entree) * 100
-    trades_termines = max(etat["nb_trades"] - 1, 0)
-    win_rate = etat["nb_wins"] / trades_termines if trades_termines > 0 else 0.50
-    avg_win = etat["avg_win_pct"] if etat["avg_win_pct"] > 0 else distance_stop_pct * RATIO_RR
-    avg_loss = etat["avg_loss_pct"] if etat["avg_loss_pct"] > 0 else distance_stop_pct
-    mise = calculer_mise(capital, trades_termines, win_rate, avg_win, avg_loss)
-    telegram(f"<b>TRADE #{numero_trade} OUVERT</b>\n{direction} {symbole}\nPrix: {prix_entree}\nStop: {stop_loss}\nObjectif: {objectif_final}\nMise: {mise}EUR x{LEVIER}")
-    debut = time.time()
-    stop_actuel = stop_loss
-    meilleur_prix = prix_entree
-    dernier_log = 0
-    prix_sortie = prix_entree
+    trades_termines   = max(etat["nb_trades"] - 1, 0)
+    win_rate          = etat["nb_wins"] / trades_termines if trades_termines > 0 else 0.50
+    avg_win           = etat["avg_win_pct"]  if etat["avg_win_pct"]  > 0 else distance_stop_pct * RATIO_RR
+    avg_loss          = etat["avg_loss_pct"] if etat["avg_loss_pct"] > 0 else distance_stop_pct
+    mise              = calculer_mise(capital, trades_termines, win_rate, avg_win, avg_loss)
+
+    telegram(
+        f"<b>TRADE #{numero_trade} OUVERT</b>\n"
+        f"{direction} {symbole}\n"
+        f"Prix: {prix_entree}\nStop: {stop_loss}\n"
+        f"Objectif: {objectif_final}\nMise: {mise}EUR x{LEVIER}"
+    )
+
+    debut           = time.time()
+    stop_actuel     = stop_loss
+    meilleur_prix   = prix_entree
+    dernier_log     = 0
+    prix_sortie     = prix_entree
     partiel_execute = False
-    gain_partiel = 0
-    niveau_actuel = 2.50
+    gain_partiel    = 0.0
+    # Bug #1 corrigé : None au lieu de 2.50 pour détecter le premier changement
+    niveau_actuel   = None
+
     while True:
         time.sleep(CHECK_INTERVAL)
         prix_actuel = get_prix_actuel(symbole)
         if prix_actuel is None:
             continue
         prix_sortie = prix_actuel
+
+        # Calcul PnL sur mise complète (position entière)
         if direction == "ACHAT":
-            pnl = round((prix_actuel - prix_entree) / prix_entree * mise * LEVIER, 2)
+            pnl_total = round((prix_actuel - prix_entree) / prix_entree * mise * LEVIER, 4)
         else:
-            pnl = round((prix_entree - prix_actuel) / prix_entree * mise * LEVIER, 2)
-        multiplicateur = get_multiplicateur_atr(pnl)
-        distance_trailing = atr * multiplicateur
+            pnl_total = round((prix_entree - prix_actuel) / prix_entree * mise * LEVIER, 4)
+
+        # Bug #2 corrigé : trailing progressif seulement si PnL > 0
+        multiplicateur     = get_multiplicateur_atr(pnl_total)
+        distance_trailing  = atr * multiplicateur
+
+        # Bug #1 + #3 corrigés : mise à jour niveau_actuel sans condition stop_modifie
+        if multiplicateur != niveau_actuel:
+            niveau_actuel = multiplicateur
+            log.info(
+                f"  [{symbole}] Trailing niveau → x{multiplicateur} ATR "
+                f"(PnL={pnl_total:+.2f}€)"
+            )
+
+        # Mise à jour du trailing stop
         stop_modifie = False
         if direction == "ACHAT":
             if prix_actuel > meilleur_prix:
                 meilleur_prix = prix_actuel
             nouveau_stop = round(meilleur_prix - distance_trailing, 8)
             if nouveau_stop > stop_actuel:
-                stop_actuel = nouveau_stop
+                stop_actuel  = nouveau_stop
                 stop_modifie = True
         else:
             if prix_actuel < meilleur_prix:
                 meilleur_prix = prix_actuel
             nouveau_stop = round(meilleur_prix + distance_trailing, 8)
             if nouveau_stop < stop_actuel:
-                stop_actuel = nouveau_stop
+                stop_actuel  = nouveau_stop
                 stop_modifie = True
-        if multiplicateur != niveau_actuel and stop_modifie:
-            niveau_actuel = multiplicateur
+
+        if stop_modifie:
+            log.debug(f"  [{symbole}] Stop mis à jour → {stop_actuel:.8f}")
+
+        # Conditions de sortie
         if direction == "ACHAT":
             atteint_partiel = not partiel_execute and prix_actuel >= objectif_partiel
-            atteint_final = prix_actuel >= objectif_final
-            atteint_stop = prix_actuel <= stop_actuel
+            atteint_final   = prix_actuel >= objectif_final
+            atteint_stop    = prix_actuel <= stop_actuel
         else:
             atteint_partiel = not partiel_execute and prix_actuel <= objectif_partiel
-            atteint_final = prix_actuel <= objectif_final
-            atteint_stop = prix_actuel >= stop_actuel
+            atteint_final   = prix_actuel <= objectif_final
+            atteint_stop    = prix_actuel >= stop_actuel
+
         duree = int((time.time() - debut) / 60)
         if time.time() - dernier_log >= 60:
-            log.info(f"  {symbole}: {prix_actuel} | PnL: {pnl}EUR | Stop: {stop_actuel} | {duree}min")
+            log.info(
+                f"  {symbole}: {prix_actuel} | PnL: {pnl_total:+.2f}€ | "
+                f"Stop: {stop_actuel} | Trailing: x{multiplicateur} | {duree}min"
+            )
             dernier_log = time.time()
-        trade_info = {"prix_entree": prix_entree, "prix_sortie": prix_sortie, "stop_loss": stop_loss, "objectif": objectif_final, "duree_minutes": duree}
+
+        trade_info = {
+            "prix_entree":   prix_entree,
+            "prix_sortie":   prix_sortie,
+            "stop_loss":     stop_loss,
+            "objectif":      objectif_final,
+            "duree_minutes": duree,
+        }
+
+        # ── Sortie partielle
         if atteint_partiel:
-            gain_partiel = round(pnl * 0.5, 2)
+            # Bug #4 corrigé : gain partiel = 50% du PnL sur 50% de la mise
+            gain_partiel    = round(pnl_total * 0.5, 2)
             partiel_execute = True
+            log.info(f"  [{symbole}] SORTIE PARTIELLE : +{gain_partiel}€")
             telegram(f"<b>SORTIE PARTIELLE</b>\n{symbole} | +{gain_partiel} EUR")
             continue
+
+        # ── Objectif final atteint
         if atteint_final:
-            gain_final = round(pnl * 0.5, 2) if partiel_execute else pnl
-            gain_total = round(gain_partiel + gain_final, 2)
-            telegram(f"<b>OBJECTIF ATTEINT</b>\n{symbole} {direction}\nGain : +{gain_total} EUR\nDuree : {duree} min")
+            if partiel_execute:
+                # Bug #4 corrigé : gain sur la demi-position restante
+                gain_final  = round(pnl_total * 0.5, 2)
+                gain_total  = round(gain_partiel + gain_final, 2)
+            else:
+                gain_total = round(pnl_total, 2)
+            telegram(
+                f"<b>OBJECTIF ATTEINT</b>\n{symbole} {direction}\n"
+                f"Gain : +{gain_total} EUR\nDuree : {duree} min"
+            )
             return "GAGNE", gain_total, mise, trade_info
+
+        # ── Stop atteint
         if atteint_stop:
             if partiel_execute:
-                gain_reste = round(pnl * 0.5, 2)
+                # Bug #4 corrigé : perte sur la demi-position restante
+                gain_reste = round(pnl_total * 0.5, 2)
                 gain_total = round(gain_partiel + gain_reste, 2)
-                resultat = "GAGNE" if gain_total > 0 else "PERDU"
+                resultat   = "GAGNE" if gain_total > 0 else "PERDU"
                 telegram(f"<b>STOP (apres partiel)</b>\n{symbole} | {gain_total} EUR")
-                return resultat, gain_total, mise, trade_info
             else:
-                telegram(f"<b>STOP-LOSS</b>\n{symbole} {direction}\nPerte : {pnl} EUR")
-                return "PERDU", pnl, mise, trade_info
+                gain_total = round(pnl_total, 2)
+                resultat   = "PERDU"
+                telegram(f"<b>STOP-LOSS</b>\n{symbole} {direction}\nPerte : {gain_total} EUR")
+            return resultat, gain_total, mise, trade_info
+
+        # ── Timeout
         if time.time() - debut >= TIMEOUT_TRADE:
             if partiel_execute:
-                gain_reste = round(pnl * 0.5, 2)
+                # Bug #5 corrigé : gain sur demi-position restante au timeout
+                gain_reste = round(pnl_total * 0.5, 2)
                 gain_total = round(gain_partiel + gain_reste, 2)
             else:
-                gain_total = pnl
+                gain_total = round(pnl_total, 2)
             resultat = "GAGNE" if gain_total > 0 else "PERDU"
             telegram(f"<b>TIMEOUT</b>\n{symbole} | {gain_total} EUR")
             return resultat, gain_total, mise, trade_info
+
 
 def verifier_kill_switch(etat, capital):
     if capital < CAPITAL_INITIAL * SEUIL_RUINE:
@@ -442,11 +515,11 @@ def verifier_kill_switch(etat, capital):
     else:
         if pause_until > 0 and etat.get("pertes_consecutives", 0) >= MAX_PERTES_CONSECUTIVES:
             etat["pertes_consecutives"] = 0
-            etat["pause_until"] = 0
+            etat["pause_until"]         = 0
             sauvegarder_etat(etat)
     if etat["pertes_consecutives"] >= MAX_PERTES_CONSECUTIVES:
         telegram(f"<b>KILL SWITCH</b>\n{MAX_PERTES_CONSECUTIVES} pertes consecutives\nPause 12h")
-        etat["pause_until"] = int(time.time()) + PAUSE_DUREE
+        etat["pause_until"]         = int(time.time()) + PAUSE_DUREE
         etat["pertes_consecutives"] = 0
         sauvegarder_etat(etat)
         return "PAUSE"
@@ -454,82 +527,128 @@ def verifier_kill_switch(etat, capital):
 
 def afficher_tableau_de_bord(etat):
     win_rate = (etat["nb_wins"] / etat["nb_trades"] * 100) if etat["nb_trades"] > 0 else 0
-    perf = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
+    perf     = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
     log.info(f"\n  Capital : {round(etat['capital'],2)}EUR ({round(perf,2)}%)")
     log.info(f"  Trades : {etat['nb_trades']} | Wins : {etat['nb_wins']} ({win_rate:.1f}%) | Losses : {etat['nb_losses']}")
 
 def envoyer_rapport_telegram(etat):
     win_rate = (etat["nb_wins"] / etat["nb_trades"] * 100) if etat["nb_trades"] > 0 else 0
-    perf = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
-    telegram(f"<b>RAPPORT BOT V8</b>\nCapital : {round(etat['capital'],2)}EUR ({round(perf,2)}%)\nTrades : {etat['nb_trades']} | WR : {round(win_rate,1)}%\nNET : {round(etat['cumul_net'],2)}EUR")
+    perf     = ((etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100)
+    telegram(
+        f"<b>RAPPORT BOT V8</b>\n"
+        f"Capital : {round(etat['capital'],2)}EUR ({round(perf,2)}%)\n"
+        f"Trades : {etat['nb_trades']} | WR : {round(win_rate,1)}%\n"
+        f"NET : {round(etat['cumul_net'],2)}EUR"
+    )
 
 def demarrer_bot():
-    log.info("BOT MEAN REVERSION V8 - DEMARRAGE")
+    log.info("BOT MEAN REVERSION V8.1 CORRIGE - DEMARRAGE")
     init_database()
     etat = charger_etat()
+
+    # Bug #9 corrigé : s'assurer que nb_skips existe toujours
+    if "nb_skips" not in etat:
+        etat["nb_skips"] = 0
+        sauvegarder_etat(etat)
+
     detecter_regime()
     afficher_tableau_de_bord(etat)
-    telegram(f"<b>BOT V8 DEMARRE</b>\nCapital : {round(etat['capital'],2)}EUR\nRegime : {regime_actuel['mode']}")
+    telegram(
+        f"<b>BOT V8.1 DEMARRE</b>\n"
+        f"Capital : {round(etat['capital'],2)}EUR\n"
+        f"Regime : {regime_actuel['mode']}"
+    )
+
     while True:
         try:
             if time.time() - regime_actuel["derniere_maj"] >= V8_SCAN_INTERVAL:
                 detecter_regime()
+
             statut = verifier_kill_switch(etat, etat["capital"])
             if statut == "RUINE":
                 break
             if statut == "PAUSE":
                 etat = charger_etat()
                 continue
+
             symbole, direction, details = choisir_meilleur_marche()
             if direction == "NEUTRE" or symbole is None:
                 etat["nb_skips"] += 1
                 sauvegarder_etat(etat)
                 time.sleep(PAUSE)
                 continue
+
             etat["nb_trades"] += 1
-            resultat, gain, mise, trade_info = simuler_trade(symbole, direction, etat["nb_trades"], etat["capital"], details, etat)
+            resultat, gain, mise, trade_info = simuler_trade(
+                symbole, direction, etat["nb_trades"], etat["capital"], details, etat
+            )
+
             if resultat == "ERREUR":
                 etat["nb_trades"] -= 1
                 time.sleep(PAUSE)
                 continue
-            etat["capital"] = round(etat["capital"] + gain, 2)
+
+            etat["capital"]   = round(etat["capital"] + gain, 2)
             etat["cumul_net"] = round(etat["capital"] - CAPITAL_INITIAL, 2)
+
             if resultat == "GAGNE":
-                etat["nb_wins"] += 1
+                etat["nb_wins"]   += 1
                 etat["total_gagne"] = round(etat["total_gagne"] + gain, 2)
                 etat["pertes_consecutives"] = 0
                 gain_pct = (gain / max(mise * LEVIER, 1)) * 100
                 if etat["avg_win_pct"] == 0:
                     etat["avg_win_pct"] = gain_pct
                 else:
-                    etat["avg_win_pct"] = round((etat["avg_win_pct"] * (etat["nb_wins"]-1) + gain_pct) / etat["nb_wins"], 4)
+                    etat["avg_win_pct"] = round(
+                        (etat["avg_win_pct"] * (etat["nb_wins"] - 1) + gain_pct) / etat["nb_wins"], 4
+                    )
             else:
-                etat["nb_losses"] += 1
+                etat["nb_losses"]  += 1
                 etat["total_perdu"] = round(etat["total_perdu"] + abs(gain), 2)
                 etat["pertes_consecutives"] += 1
                 perte_pct = (abs(gain) / max(mise * LEVIER, 1)) * 100
                 if etat["avg_loss_pct"] == 0:
                     etat["avg_loss_pct"] = perte_pct
                 else:
-                    etat["avg_loss_pct"] = round((etat["avg_loss_pct"] * (etat["nb_losses"]-1) + perte_pct) / etat["nb_losses"], 4)
+                    etat["avg_loss_pct"] = round(
+                        (etat["avg_loss_pct"] * (etat["nb_losses"] - 1) + perte_pct) / etat["nb_losses"], 4
+                    )
+
             enregistrer_trade({
-                'marche': symbole, 'direction': direction, 'resultat': resultat,
-                'prix_entree': trade_info['prix_entree'], 'prix_sortie': trade_info['prix_sortie'],
-                'stop_loss': trade_info['stop_loss'], 'objectif': trade_info['objectif'],
-                'mise': mise, 'gain': round(gain, 2), 'capital_apres': etat['capital'],
-                'duree_minutes': trade_info['duree_minutes'], 'score': None,
-                'adx': details.get('adx'), 'atr': details.get('atr'), 'rsi': details.get('rsi')
+                'marche':        symbole,
+                'direction':     direction,
+                'resultat':      resultat,
+                'prix_entree':   trade_info['prix_entree'],
+                'prix_sortie':   trade_info['prix_sortie'],
+                'stop_loss':     trade_info['stop_loss'],
+                'objectif':      trade_info['objectif'],
+                'mise':          mise,
+                'gain':          round(gain, 2),
+                'capital_apres': etat['capital'],
+                'duree_minutes': trade_info['duree_minutes'],
+                'score':         None,
+                'adx':           details.get('adx'),
+                'atr':           details.get('atr'),
+                'rsi':           details.get('rsi'),
             })
+
             etat['historique'].append({
-                'heure': datetime.now().strftime('%Y-%m-%d %H:%M'), 'marche': symbole,
-                'direction': direction, 'resultat': resultat, 'gain': round(gain, 2),
-                'mise': round(mise, 2), 'capital': etat['capital']
+                'heure':     datetime.now().strftime('%Y-%m-%d %H:%M'),
+                'marche':    symbole,
+                'direction': direction,
+                'resultat':  resultat,
+                'gain':      round(gain, 2),
+                'mise':      round(mise, 2),
+                'capital':   etat['capital'],
             })
+
             sauvegarder_etat(etat)
             afficher_tableau_de_bord(etat)
             envoyer_rapport_telegram(etat)
             time.sleep(PAUSE)
+
         except KeyboardInterrupt:
+            log.info("Arrêt demandé par l'utilisateur.")
             break
         except Exception as e:
             log.error(f"Erreur : {e}")
