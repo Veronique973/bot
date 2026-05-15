@@ -1,5 +1,4 @@
-"""
-BOT MEAN REVERSION V8 - ADAPTATIF CORRIGÉ
+"""BOT MEAN REVERSION V8 - ADAPTATIF CORRIGÉ
 Base : V7.3 corrige + detection regime
 Trailing Stop CONTINU | Paliers : +0.75€, +3€, +7.50€...
 
