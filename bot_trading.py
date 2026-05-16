@@ -81,19 +81,25 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 MARCHES = [
-    "XRPUSDT", "ATOMUSDT", "LINKUSDT",
-    "ADAUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT", "DOTUSDT"
+    "ETHUSDT", "XRPUSDT", "SOLUSDT",  "ADAUSDT",
+    "LINKUSDT", "ATOMUSDT", "AVAXUSDT", "NEARUSDT",
+    "DOTUSDT", "DOGEUSDT", "LTCUSDT",  "ALGOUSDT", "TRXUSDT"
 ]
 
 KRAKEN_SYMBOLS = {
+    "ETHUSDT":  "XETHZUSD",
     "XRPUSDT":  "XXRPZUSD",
-    "ATOMUSDT": "ATOMUSD",
-    "LINKUSDT": "LINKUSD",
-    "ADAUSDT":  "ADAUSD",
     "SOLUSDT":  "SOLUSD",
+    "ADAUSDT":  "ADAUSD",
+    "LINKUSDT": "LINKUSD",
+    "ATOMUSDT": "ATOMUSD",
     "AVAXUSDT": "AVAXUSD",
     "NEARUSDT": "NEARUSD",
-    "DOTUSDT":  "DOTUSD"
+    "DOTUSDT":  "DOTUSD",
+    "DOGEUSDT": "XDGUSD",
+    "LTCUSDT":  "XLTCZUSD",
+    "ALGOUSDT": "ALGOUSD",
+    "TRXUSDT":  "TRXUSD",
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -104,7 +110,8 @@ trades_lock    = None  # initialisé dans boucle_principale()
 
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V2")
-log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER} | Max {MAX_TRADES_SIMULTANES} trades")
+log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
+log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades simultanés")
 log.info(f"  Multi-timeframe : 2h → 1h → 15min")
 log.info(f"  Range vs Tendance | Heures intelligentes")
 log.info(f"  Lock paliers : {LOCK_PALIERS}")
