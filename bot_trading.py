@@ -48,7 +48,7 @@ RSI_OVERSOLD            = 30
 RSI_OVERBOUGHT          = 70
 ADX_RANGE_MAX           = 22
 ADX_TREND_MIN           = 25
-VOLUME_MINI             = 0.30
+VOLUME_MINI             = 0.20
 
 # Gestion mise dynamique
 WINS_CONFIANCE          = 3
