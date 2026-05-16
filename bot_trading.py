@@ -395,8 +395,8 @@ async def analyser_multi_timeframe(session, symbole):
             log.info(f"  {symbole} [RANGE] Neutre {position_range:.0%} → skip")
             return "NEUTRE", 0, details
 
-        # Score minimum 6/9 — plus strict
-        if score < 6:
+        # Score minimum 5/9
+        if score < 5:
             log.info(f"  {symbole} [RANGE] Score {score}/9 insuffisant → skip")
             return "NEUTRE", 0, details
         return direction, score, details
@@ -457,8 +457,8 @@ async def analyser_multi_timeframe(session, symbole):
             log.info(f"  {symbole} [TENDANCE] EMAs croisées → skip")
             return "NEUTRE", 0, details
 
-        # Score minimum 6/9 — plus strict
-        if score < 6:
+        # Score minimum 5/9
+        if score < 5:
             log.info(f"  {symbole} [TENDANCE] Score {score}/9 insuffisant → skip")
             return "NEUTRE", 0, details
         return direction, score, details
@@ -817,7 +817,7 @@ async def boucle_principale():
                 signaux = {}
                 for marche in marches_disponibles:
                     direction, score, details = await analyser_multi_timeframe(session, marche)
-                    if direction != "NEUTRE" and score >= 6:
+                    if direction != "NEUTRE" and score >= 5:
                         signaux[marche] = {"direction": direction, "score": score, "details": details}
                     await asyncio.sleep(0.3)
 
