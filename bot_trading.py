@@ -355,9 +355,9 @@ async def analyser_multi_timeframe(session, symbole):
 
         if position_range <= RANGE_BAS_SEUIL:
             direction = "ACHAT"
-            # Filtre bloquant : momentum 15min doit être haussier
+            # Filtre bloquant : seulement si momentum CLAIREMENT baissier
             if momentum_haussier is False:
-                log.info(f"  {symbole} [RANGE] Bas mais momentum baissier → skip")
+                log.info(f"  {symbole} [RANGE] Bas mais momentum clairement baissier → skip")
                 return "NEUTRE", 0, details
             # Filtre bloquant : 2h ne doit pas être en tendance baissière forte
             if prix_2h < ema20_2h and rsi_2h < 40:
@@ -367,15 +367,16 @@ async def analyser_multi_timeframe(session, symbole):
             if rsi_1h < RSI_OVERSOLD:          score += 2  # RSI survendu 1h
             if rsi_2h < 50:                    score += 1  # 2h pas suracheté
             if rsi_15m < RSI_OVERSOLD + 5:     score += 1  # 15min aussi bas
-            if momentum_haussier is True:       score += 1  # momentum confirme
+            if momentum_haussier is True:       score += 1  # momentum haussier (bonus)
             if vol_ratio >= 0.50:               score += 1  # volume correct
-            log.info(f"  {symbole} [RANGE↑] Bas {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↑' if momentum_haussier else '?'} | Score={score}/9")
+            mom_str = '↑' if momentum_haussier is True else ('?' if momentum_haussier is None else '↓')
+            log.info(f"  {symbole} [RANGE↑] Bas {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={mom_str} | Score={score}/9")
 
         elif position_range >= RANGE_HAUT_SEUIL:
             direction = "VENTE"
-            # Filtre bloquant : momentum 15min doit être baissier
+            # Filtre bloquant : seulement si momentum CLAIREMENT haussier
             if momentum_haussier is True:
-                log.info(f"  {symbole} [RANGE] Haut mais momentum haussier → skip")
+                log.info(f"  {symbole} [RANGE] Haut mais momentum clairement haussier → skip")
                 return "NEUTRE", 0, details
             # Filtre bloquant : 2h ne doit pas être en tendance haussière forte
             if prix_2h > ema20_2h and rsi_2h > 60:
@@ -385,9 +386,10 @@ async def analyser_multi_timeframe(session, symbole):
             if rsi_1h > RSI_OVERBOUGHT:        score += 2  # RSI suracheté 1h
             if rsi_2h > 50:                    score += 1  # 2h pas survendu
             if rsi_15m > RSI_OVERBOUGHT - 5:   score += 1  # 15min aussi haut
-            if momentum_haussier is False:      score += 1  # momentum confirme
+            if momentum_haussier is False:      score += 1  # momentum baissier (bonus)
             if vol_ratio >= 0.50:               score += 1  # volume correct
-            log.info(f"  {symbole} [RANGE↓] Haut {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↓' if momentum_haussier is False else '?'} | Score={score}/9")
+            mom_str = '↓' if momentum_haussier is False else ('?' if momentum_haussier is None else '↑')
+            log.info(f"  {symbole} [RANGE↓] Haut {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={mom_str} | Score={score}/9")
 
         else:
             log.info(f"  {symbole} [RANGE] Neutre {position_range:.0%} → skip")
@@ -416,9 +418,9 @@ async def analyser_multi_timeframe(session, symbole):
                 log.info(f"  {symbole} [TENDANCE↑] 2h pas confirmé (prix={prix_2h:.4f} EMA20={ema20_2h:.4f} RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
 
-            # Filtre bloquant momentum 15min — OBLIGATOIRE
+            # Filtre bloquant momentum 15min — seulement si CLAIREMENT baissier
             if momentum_haussier is False:
-                log.info(f"  {symbole} [TENDANCE↑] Momentum 15min baissier → skip")
+                log.info(f"  {symbole} [TENDANCE↑] Momentum 15min clairement baissier → skip")
                 return "NEUTRE", 0, details
 
             score += 3  # 1h aligné (prix > EMA20 > EMA50)
@@ -438,9 +440,9 @@ async def analyser_multi_timeframe(session, symbole):
                 log.info(f"  {symbole} [TENDANCE↓] 2h pas confirmé (prix={prix_2h:.4f} EMA20={ema20_2h:.4f} RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
 
-            # Filtre bloquant momentum 15min — OBLIGATOIRE
+            # Filtre bloquant momentum 15min — seulement si CLAIREMENT haussier
             if momentum_haussier is True:
-                log.info(f"  {symbole} [TENDANCE↓] Momentum 15min haussier → skip")
+                log.info(f"  {symbole} [TENDANCE↓] Momentum 15min clairement haussier → skip")
                 return "NEUTRE", 0, details
 
             score += 3  # 1h aligné (prix < EMA20 < EMA50)
