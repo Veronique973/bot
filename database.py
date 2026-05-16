@@ -45,7 +45,7 @@ def init_database():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bot_state (
                 id INTEGER PRIMARY KEY DEFAULT 1,
-                capital REAL DEFAULT 215.0,
+                capital REAL DEFAULT 500.0,
                 cumul_net REAL DEFAULT 0.0,
                 total_gagne REAL DEFAULT 0.0,
                 total_perdu REAL DEFAULT 0.0,
@@ -85,7 +85,7 @@ def init_database():
         cursor.execute('SELECT COUNT(*) FROM bot_state')
         count = cursor.fetchone()[0]
         if count == 0:
-            cursor.execute('INSERT INTO bot_state (id) VALUES (1)')
+            cursor.execute('INSERT INTO bot_state (id, capital) VALUES (1, 500.0)')
         conn.commit()
         log.info("Base PostgreSQL initialisee")
     except Exception as e:
@@ -224,7 +224,7 @@ def enregistrer_trade(trade):
 
 def _etat_defaut():
     return {
-        'capital': 215.0,
+        'capital': 500.0,
         'cumul_net': 0.0,
         'total_gagne': 0.0,
         'total_perdu': 0.0,
