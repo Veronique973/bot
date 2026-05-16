@@ -105,7 +105,7 @@ trades_lock    = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V2")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER} | Max {MAX_TRADES_SIMULTANES} trades")
-log.info(f"  Multi-timeframe : 4h → 1h → 15min")
+log.info(f"  Multi-timeframe : 2h → 1h → 15min")
 log.info(f"  Range vs Tendance | Heures intelligentes")
 log.info(f"  Lock paliers : {LOCK_PALIERS}")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
@@ -253,15 +253,15 @@ def analyser_position_range(df_1h):
 # ═══════════════════════════════════════════════════════════════
 #  DÉTECTION RÉGIME
 # ═══════════════════════════════════════════════════════════════
-def detecter_regime(df_4h, df_1h):
-    adx_4h = calc_adx(df_4h)
+def detecter_regime(df_2h, df_1h):
+    adx_2h = calc_adx(df_2h)
     adx_1h = calc_adx(df_1h)
-    if adx_4h < ADX_RANGE_MAX and adx_1h < ADX_RANGE_MAX + 5:
-        return "RANGE", adx_4h, adx_1h
-    elif adx_4h >= ADX_TREND_MIN or adx_1h >= ADX_TREND_MIN:
-        return "TENDANCE", adx_4h, adx_1h
+    if adx_2h < ADX_RANGE_MAX and adx_1h < ADX_RANGE_MAX + 5:
+        return "RANGE", adx_2h, adx_1h
+    elif adx_2h >= ADX_TREND_MIN or adx_1h >= ADX_TREND_MIN:
+        return "TENDANCE", adx_2h, adx_1h
     else:
-        return "NEUTRE", adx_4h, adx_1h
+        return "NEUTRE", adx_2h, adx_1h
 
 # ═══════════════════════════════════════════════════════════════
 #  MOMENTUM 15MIN — direction du RSI sur les 3 dernières bougies
@@ -293,22 +293,22 @@ def calc_momentum_15m(df_15m):
 #  ET que le momentum 15min confirme la direction
 # ═══════════════════════════════════════════════════════════════
 async def analyser_multi_timeframe(session, symbole):
-    df_4h  = await get_klines(session, symbole, interval=240, limite=50)
+    df_2h  = await get_klines(session, symbole, interval=120, limite=50)
     df_1h  = await get_klines(session, symbole, interval=60,  limite=100)
     df_15m = await get_klines(session, symbole, interval=15,  limite=100)
 
-    if df_4h is None or df_1h is None or df_15m is None:
+    if df_2h is None or df_1h is None or df_15m is None:
         return "NEUTRE", 0, {}
-    if len(df_4h) < 20 or len(df_1h) < 30 or len(df_15m) < 30:
+    if len(df_2h) < 20 or len(df_1h) < 30 or len(df_15m) < 30:
         return "NEUTRE", 0, {}
 
-    regime, adx_4h, adx_1h = detecter_regime(df_4h, df_1h)
+    regime, adx_2h, adx_1h = detecter_regime(df_2h, df_1h)
 
-    # ── Indicateurs 4h (juge de la tendance principale)
-    rsi_4h   = calc_rsi(df_4h)
-    ema20_4h = calc_ema(df_4h, 20)
-    ema50_4h = calc_ema(df_4h, 50)
-    prix_4h  = float(df_4h['close'].iloc[-1])
+    # ── Indicateurs 2h (juge de la tendance principale)
+    rsi_2h   = calc_rsi(df_2h)
+    ema20_2h = calc_ema(df_2h, 20)
+    ema50_2h = calc_ema(df_2h, 50)
+    prix_2h  = float(df_2h['close'].iloc[-1])
 
     # ── Indicateurs 1h
     rsi_1h   = calc_rsi(df_1h)
@@ -325,8 +325,8 @@ async def analyser_multi_timeframe(session, symbole):
     position_range, haut, bas, prix_actuel = analyser_position_range(df_1h)
 
     details = {
-        "regime": regime, "adx_4h": adx_4h, "adx_1h": adx_1h,
-        "rsi_4h": rsi_4h, "rsi_1h": rsi_1h, "rsi_15m": rsi_15m,
+        "regime": regime, "adx_2h": adx_2h, "adx_1h": adx_1h,
+        "rsi_2h": rsi_2h, "rsi_1h": rsi_1h, "rsi_15m": rsi_15m,
         "ema20": ema20_1h, "ema50": ema50_1h, "prix": prix_actuel,
         "atr": atr_1h, "vol_ratio": vol_ratio,
         "position_range": position_range,
@@ -352,17 +352,17 @@ async def analyser_multi_timeframe(session, symbole):
             if momentum_haussier is False:
                 log.info(f"  {symbole} [RANGE] Bas mais momentum baissier → skip")
                 return "NEUTRE", 0, details
-            # Filtre bloquant : 4h ne doit pas être en tendance baissière forte
-            if prix_4h < ema20_4h and rsi_4h < 40:
-                log.info(f"  {symbole} [RANGE] 4h trop baissier (prix<EMA20 RSI={rsi_4h}) → skip")
+            # Filtre bloquant : 2h ne doit pas être en tendance baissière forte
+            if prix_2h < ema20_2h and rsi_2h < 40:
+                log.info(f"  {symbole} [RANGE] 2h trop baissier (prix<EMA20 RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
             score += 3  # position au bas du range
             if rsi_1h < RSI_OVERSOLD:          score += 2  # RSI survendu 1h
-            if rsi_4h < 50:                    score += 1  # 4h pas suracheté
+            if rsi_2h < 50:                    score += 1  # 2h pas suracheté
             if rsi_15m < RSI_OVERSOLD + 5:     score += 1  # 15min aussi bas
             if momentum_haussier is True:       score += 1  # momentum confirme
             if vol_ratio >= 0.50:               score += 1  # volume correct
-            log.info(f"  {symbole} [RANGE↑] Bas {position_range:.0%} | RSI 4h={rsi_4h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↑' if momentum_haussier else '?'} | Score={score}/9")
+            log.info(f"  {symbole} [RANGE↑] Bas {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↑' if momentum_haussier else '?'} | Score={score}/9")
 
         elif position_range >= RANGE_HAUT_SEUIL:
             direction = "VENTE"
@@ -370,17 +370,17 @@ async def analyser_multi_timeframe(session, symbole):
             if momentum_haussier is True:
                 log.info(f"  {symbole} [RANGE] Haut mais momentum haussier → skip")
                 return "NEUTRE", 0, details
-            # Filtre bloquant : 4h ne doit pas être en tendance haussière forte
-            if prix_4h > ema20_4h and rsi_4h > 60:
-                log.info(f"  {symbole} [RANGE] 4h trop haussier (prix>EMA20 RSI={rsi_4h}) → skip")
+            # Filtre bloquant : 2h ne doit pas être en tendance haussière forte
+            if prix_2h > ema20_2h and rsi_2h > 60:
+                log.info(f"  {symbole} [RANGE] 2h trop haussier (prix>EMA20 RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
             score += 3  # position au haut du range
             if rsi_1h > RSI_OVERBOUGHT:        score += 2  # RSI suracheté 1h
-            if rsi_4h > 50:                    score += 1  # 4h pas survendu
+            if rsi_2h > 50:                    score += 1  # 2h pas survendu
             if rsi_15m > RSI_OVERBOUGHT - 5:   score += 1  # 15min aussi haut
             if momentum_haussier is False:      score += 1  # momentum confirme
             if vol_ratio >= 0.50:               score += 1  # volume correct
-            log.info(f"  {symbole} [RANGE↓] Haut {position_range:.0%} | RSI 4h={rsi_4h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↓' if momentum_haussier is False else '?'} | Score={score}/9")
+            log.info(f"  {symbole} [RANGE↓] Haut {position_range:.0%} | RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom={'↓' if momentum_haussier is False else '?'} | Score={score}/9")
 
         else:
             log.info(f"  {symbole} [RANGE] Neutre {position_range:.0%} → skip")
@@ -394,7 +394,7 @@ async def analyser_multi_timeframe(session, symbole):
 
     # ════════════════════════════════════════════════════════
     #  STRATÉGIE TENDANCE
-    #  Règle : les 3 TF (4h + 1h + 15min) doivent confirmer
+    #  Règle : les 3 TF (2h + 1h + 15min) doivent confirmer
     # ════════════════════════════════════════════════════════
     elif regime == "TENDANCE":
         score = 0
@@ -404,9 +404,9 @@ async def analyser_multi_timeframe(session, symbole):
         if prix_1h > ema20_1h > ema50_1h:
             direction = "ACHAT"
 
-            # Filtre bloquant 4h — OBLIGATOIRE
-            if not (prix_4h > ema20_4h and rsi_4h > 50):
-                log.info(f"  {symbole} [TENDANCE↑] 4h pas confirmé (prix={prix_4h:.4f} EMA20={ema20_4h:.4f} RSI={rsi_4h}) → skip")
+            # Filtre bloquant 2h — OBLIGATOIRE
+            if not (prix_2h > ema20_2h and rsi_2h > 50):
+                log.info(f"  {symbole} [TENDANCE↑] 2h pas confirmé (prix={prix_2h:.4f} EMA20={ema20_2h:.4f} RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
 
             # Filtre bloquant momentum 15min — OBLIGATOIRE
@@ -415,20 +415,20 @@ async def analyser_multi_timeframe(session, symbole):
                 return "NEUTRE", 0, details
 
             score += 3  # 1h aligné (prix > EMA20 > EMA50)
-            score += 2  # 4h confirmé (prix > EMA20 4h et RSI > 50)
+            score += 2  # 2h confirmé (prix > EMA20 2h et RSI > 50)
             if rsi_1h > 50 and rsi_1h < RSI_OVERBOUGHT: score += 1  # RSI 1h sain
-            if rsi_4h > 55:                              score += 1  # 4h fort
+            if rsi_2h > 55:                              score += 1  # 2h fort
             if momentum_haussier is True:                score += 1  # momentum clair
             if vol_ratio >= 0.50:                        score += 1  # volume
-            log.info(f"  {symbole} [TENDANCE↑] RSI 4h={rsi_4h} 1h={rsi_1h} 15m={rsi_15m} | Mom=↑ | Score={score}/9")
+            log.info(f"  {symbole} [TENDANCE↑] RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom=↑ | Score={score}/9")
 
         # ── VENTE : tendance baissière confirmée sur 3 TF
         elif prix_1h < ema20_1h < ema50_1h:
             direction = "VENTE"
 
-            # Filtre bloquant 4h — OBLIGATOIRE
-            if not (prix_4h < ema20_4h and rsi_4h < 50):
-                log.info(f"  {symbole} [TENDANCE↓] 4h pas confirmé (prix={prix_4h:.4f} EMA20={ema20_4h:.4f} RSI={rsi_4h}) → skip")
+            # Filtre bloquant 2h — OBLIGATOIRE
+            if not (prix_2h < ema20_2h and rsi_2h < 50):
+                log.info(f"  {symbole} [TENDANCE↓] 2h pas confirmé (prix={prix_2h:.4f} EMA20={ema20_2h:.4f} RSI={rsi_2h}) → skip")
                 return "NEUTRE", 0, details
 
             # Filtre bloquant momentum 15min — OBLIGATOIRE
@@ -437,12 +437,12 @@ async def analyser_multi_timeframe(session, symbole):
                 return "NEUTRE", 0, details
 
             score += 3  # 1h aligné (prix < EMA20 < EMA50)
-            score += 2  # 4h confirmé (prix < EMA20 4h et RSI < 50)
+            score += 2  # 2h confirmé (prix < EMA20 2h et RSI < 50)
             if rsi_1h < 50 and rsi_1h > RSI_OVERSOLD:   score += 1  # RSI 1h sain
-            if rsi_4h < 45:                              score += 1  # 4h fort baissier
+            if rsi_2h < 45:                              score += 1  # 2h fort baissier
             if momentum_haussier is False:               score += 1  # momentum clair
             if vol_ratio >= 0.50:                        score += 1  # volume
-            log.info(f"  {symbole} [TENDANCE↓] RSI 4h={rsi_4h} 1h={rsi_1h} 15m={rsi_15m} | Mom=↓ | Score={score}/9")
+            log.info(f"  {symbole} [TENDANCE↓] RSI 2h={rsi_2h} 1h={rsi_1h} 15m={rsi_15m} | Mom=↓ | Score={score}/9")
 
         else:
             log.info(f"  {symbole} [TENDANCE] EMAs croisées → skip")
@@ -455,7 +455,7 @@ async def analyser_multi_timeframe(session, symbole):
         return direction, score, details
 
     else:
-        log.info(f"  {symbole} [NEUTRE] ADX 4h={adx_4h} 1h={adx_1h} → skip")
+        log.info(f"  {symbole} [NEUTRE] ADX 2h={adx_2h} 1h={adx_1h} → skip")
         return "NEUTRE", 0, details
 
 # ═══════════════════════════════════════════════════════════════
@@ -532,7 +532,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
     log.info(f"\n  {'='*55}")
     log.info(f"  TRADE #{numero_trade} [VÉRONIQUE973] — {datetime.now().strftime('%H:%M:%S')}")
     log.info(f"  Symbole  : {symbole} ({direction}) | Régime : {regime}")
-    log.info(f"  RSI      : 4h={details.get('rsi_4h')} | 1h={details.get('rsi_1h')} | 15m={details.get('rsi_15m')}")
+    log.info(f"  RSI      : 2h={details.get('rsi_2h')} | 1h={details.get('rsi_1h')} | 15m={details.get('rsi_15m')}")
     log.info(f"  Range    : {details.get('position_range', 0):.0%}")
     log.info(f"  Prix     : {prix_entree} | Stop : {stop_loss} | Obj : {objectif_final}")
     log.info(f"  Mise     : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€")
@@ -541,7 +541,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
     await telegram(session, f"📊 <b>TRADE #{numero_trade} — VÉRONIQUE973</b>\n"
                    f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
                    f"Régime : {regime} | Session : {session_nom.upper()}\n"
-                   f"RSI 4h={details.get('rsi_4h')} 1h={details.get('rsi_1h')}\n"
+                   f"RSI 2h={details.get('rsi_2h')} 1h={details.get('rsi_1h')}\n"
                    f"Prix : {prix_entree} | Stop : {stop_loss}\n"
                    f"Objectif : {objectif_final}\n"
                    f"Mise : {mise}€ × x{LEVIER}\n"
