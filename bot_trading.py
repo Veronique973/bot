@@ -390,15 +390,20 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         if pnl > pnl_max_atteint:
             pnl_max_atteint = pnl
 
-        # ── Garantie 0.75€ minimum — stop ne descend jamais sous ce gain
+        # ── Garantie 0.75€ minimum
         if not break_even_active and pnl_max_atteint >= 0.75:
-            # Calculer le prix qui correspond à +0.75€ de PnL garanti
             if direction == "ACHAT":
-                prix_garanti = round(prix_entree * (1 + 0.75 / (mise * LEVIER)), 8)
+                # ACHAT : prix monte → gain. Stop garanti = prix qui donne +0.75€
+                # pnl = (prix - entree) / entree * mise * LEVIER = 0.75
+                # prix_garanti = entree + 0.75 * entree / (mise * LEVIER)
+                prix_garanti = round(prix_entree + 0.75 * prix_entree / (mise * LEVIER), 8)
                 if prix_garanti > stop_actuel:
                     stop_actuel = prix_garanti
             else:
-                prix_garanti = round(prix_entree * (1 - 0.75 / (mise * LEVIER)), 8)
+                # VENTE : prix descend → gain. Stop garanti = prix qui donne +0.75€
+                # pnl = (entree - prix) / entree * mise * LEVIER = 0.75
+                # prix_garanti = entree - 0.75 * entree / (mise * LEVIER)
+                prix_garanti = round(prix_entree - 0.75 * prix_entree / (mise * LEVIER), 8)
                 if prix_garanti < stop_actuel:
                     stop_actuel = prix_garanti
             break_even_active = True
@@ -420,22 +425,22 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             nouveau_stop = round(meilleur_prix - distance_trailing, 8)
             if nouveau_stop > stop_actuel:
                 stop_actuel = nouveau_stop
-            # 0.75€ garanti : stop ne descend jamais sous ce gain
+            # 0.75€ garanti ACHAT : stop ne descend jamais sous le prix garanti
             if break_even_active:
-                stop_garanti = round(prix_entree * (1 + 0.75 / (mise * LEVIER)), 8)
-                if stop_actuel < stop_garanti:
-                    stop_actuel = stop_garanti
+                prix_garanti_achat = round(prix_entree + 0.75 * prix_entree / (mise * LEVIER), 8)
+                if stop_actuel < prix_garanti_achat:
+                    stop_actuel = prix_garanti_achat
         else:
             if prix_actuel < meilleur_prix:
                 meilleur_prix = prix_actuel
             nouveau_stop = round(meilleur_prix + distance_trailing, 8)
             if nouveau_stop < stop_actuel:
                 stop_actuel = nouveau_stop
-            # 0.75€ garanti : stop ne monte jamais au dessus de ce gain
+            # 0.75€ garanti VENTE : stop ne monte jamais au dessus du prix garanti
             if break_even_active:
-                stop_garanti = round(prix_entree * (1 - 0.75 / (mise * LEVIER)), 8)
-                if stop_actuel > stop_garanti:
-                    stop_actuel = stop_garanti
+                prix_garanti_vente = round(prix_entree - 0.75 * prix_entree / (mise * LEVIER), 8)
+                if stop_actuel > prix_garanti_vente:
+                    stop_actuel = prix_garanti_vente
 
         # ── Log changement de palier
         if multiplicateur != niveau_actuel:
