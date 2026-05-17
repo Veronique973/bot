@@ -1,9 +1,9 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BOT HUMAIN — VÉRONIQUE973 V4                            ║
-║  Mean Reversion 0.60% | Trailing Stop Progressif Sans Plafond  ║
-║  Lock profits | 3 trades simultanés | Capital 500€             ║
-║  Architecture async aiohttp                                     ║
+║  Mean Reversion 0.40% | Surveillance prix temps réel            ║
+║  Trailing Stop Progressif Sans Plafond | 3 trades simultanés   ║
+║  Capital 500€ | Architecture async aiohttp                      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -32,21 +32,21 @@ LEVIER                  = 10
 MISE_BASE_PCT           = 0.10
 MISE_MIN                = 10.0
 MISE_MAX_PCT            = 0.25
-CHECK_INTERVAL          = 10         # secondes entre chaque check
-PAUSE_ENTRE_TRADES      = 120        # 2 min entre scans
+CHECK_INTERVAL          = 10         # secondes entre chaque check prix
+PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
 TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
 MAX_TRADES_SIMULTANES   = 3
 
-# ── Détection signal mean reversion
-SEUIL_MOUVEMENT_PCT     = 0.60   # chute/montée de 0.60% sur 1 bougie 15min
-NB_BOUGIES_SIGNAL       = 1      # 1 bougie 15min fermée suffit
+# ── Détection signal mean reversion — surveillance temps réel
+SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
+STOP_LOSS_MAX_EUR       = 25.0   # perte maximum par trade en €
 
 # ── Stop initial
 ATR_STOP_INITIAL        = 2.50
 
 # ── Trailing stop progressif sans plafond
-# (pnl_min, atr_multiplicateur)
+# Format : (pnl_minimum, multiplicateur_atr)
 TRAILING_PALIERS = [
     (100.0, 0.10),   # PnL > 100€ → ATR × 0.10 (très serré)
     ( 50.0, 0.15),   # PnL > 50€  → ATR × 0.15
@@ -56,12 +56,12 @@ TRAILING_PALIERS = [
     (  5.0, 0.70),   # PnL > 5€   → ATR × 0.70
     (  3.0, 1.00),   # PnL > 3€   → ATR × 1.00
     (  1.5, 1.50),   # PnL > 1.5€ → ATR × 1.50
-    (  0.75,2.00),   # PnL > 0.75€→ ATR × 2.00
-    (  0.0, 2.50),   # PnL > 0€   → ATR × 2.50 (stop initial)
+    (  0.75, 2.00),  # PnL > 0.75€→ ATR × 2.00
+    (  0.0, 2.50),   # PnL ≥ 0€   → ATR × 2.50
 ]
 
 def get_trailing_multiplicateur(pnl):
-    """Retourne le multiplicateur ATR selon le PnL actuel."""
+    """Retourne le multiplicateur ATR selon le PnL max atteint."""
     for seuil, mult in TRAILING_PALIERS:
         if pnl >= seuil:
             return mult
@@ -109,14 +109,16 @@ KRAKEN_SYMBOLS = {
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
 # ═══════════════════════════════════════════════════════════════
-trades_ouverts = {}
-trades_lock    = None  # initialisé dans boucle_principale()
+trades_ouverts  = {}    # { symbole: True }
+prix_reference  = {}    # { symbole: prix_au_moment_du_scan }
+trades_lock     = None  # initialisé dans boucle_principale()
 
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
 log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
-log.info(f"  Signal : chute/montée ≥ {SEUIL_MOUVEMENT_PCT}% sur {NB_BOUGIES_SIGNAL} bougies 15min")
+log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
+log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  Trailing stop progressif : {len(TRAILING_PALIERS)} paliers sans plafond")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
@@ -141,7 +143,7 @@ async def telegram(session, message):
 # ═══════════════════════════════════════════════════════════════
 #  DONNÉES MARCHÉ
 # ═══════════════════════════════════════════════════════════════
-async def get_klines(session, symbole, interval=15, limite=100):
+async def get_klines(session, symbole, interval=15, limite=50):
     kraken_symbol = KRAKEN_SYMBOLS.get(symbole, symbole)
     url = "https://api.kraken.com/0/public/OHLC"
     try:
@@ -167,7 +169,7 @@ async def get_klines(session, symbole, interval=15, limite=100):
             })
             return df.tail(limite).reset_index(drop=True)
     except Exception as e:
-        log.error(f"Erreur klines {symbole} ({interval}min) : {e}")
+        log.error(f"Erreur klines {symbole} : {e}")
         return None
 
 async def get_prix_actuel(session, symbole):
@@ -214,83 +216,68 @@ def calc_volume_ratio(df):
     except:
         return 0.0
 
-def detecter_mouvement(df_15m):
-    """
-    Détecte si le prix a chuté ou monté de SEUIL_MOUVEMENT_PCT%
-    sur les NB_BOUGIES_SIGNAL dernières bougies 15min fermées.
-
-    Retourne:
-      "ACHAT"  si chute >= seuil (on anticipe un rebond)
-      "VENTE"  si montée >= seuil (on anticipe une correction)
-      "NEUTRE" sinon
-    """
-    try:
-        # On prend les bougies fermées — on exclut la dernière (en cours)
-        closes = df_15m['close'].tolist()[:-1]
-        if len(closes) < NB_BOUGIES_SIGNAL + 1:
-            return "NEUTRE", 0.0
-
-        prix_debut = closes[-(NB_BOUGIES_SIGNAL + 1)]
-        prix_fin   = closes[-1]
-
-        if prix_debut <= 0:
-            return "NEUTRE", 0.0
-
-        variation_pct = (prix_fin - prix_debut) / prix_debut * 100
-
-        if variation_pct <= -SEUIL_MOUVEMENT_PCT:
-            # Chute → on achète (rebond attendu)
-            return "ACHAT", abs(variation_pct)
-        elif variation_pct >= SEUIL_MOUVEMENT_PCT:
-            # Montée → on vend (correction attendue)
-            return "VENTE", abs(variation_pct)
-        else:
-            return "NEUTRE", abs(variation_pct)
-    except:
-        return "NEUTRE", 0.0
+def calc_rsi(df, periode=14):
+    pass  # conservé pour usage futur si nécessaire
 
 # ═══════════════════════════════════════════════════════════════
-#  ANALYSE MARCHÉ
+#  DÉTECTION SIGNAL — SURVEILLANCE TEMPS RÉEL
+#  1. Prix de référence enregistré au démarrage
+#  2. Dès que variation ≥ 0.50% → signal
+#  3. Filtre volume > 0.25x
 # ═══════════════════════════════════════════════════════════════
 async def analyser_marche(session, symbole):
-    """
-    Stratégie Mean Reversion :
-    1. Détecte une chute/montée de 0.60% sur 1 bougie 15min fermée
-    2. Filtre volume > 0.25x
-    """
-    df_15m = await get_klines(session, symbole, interval=15, limite=50)
-
-    if df_15m is None or len(df_15m) < 20:
+    prix_actuel = await get_prix_actuel(session, symbole)
+    if prix_actuel is None:
         return "NEUTRE", {}
 
-    # ── Détection mouvement
-    direction, variation_pct = detecter_mouvement(df_15m)
-    if direction == "NEUTRE":
-        log.info(f"  {symbole} : variation {variation_pct:.2f}% < {SEUIL_MOUVEMENT_PCT}% → skip")
+    if symbole not in prix_reference:
+        prix_reference[symbole] = prix_actuel
+        log.info(f"  {symbole} : prix référence enregistré @ {prix_actuel}")
         return "NEUTRE", {}
 
-    # ── ATR et volume sur 15min
-    atr_15m   = calc_atr(df_15m)
-    vol_ratio = calc_volume_ratio(df_15m)
+    prix_ref = prix_reference[symbole]
+    if prix_ref <= 0:
+        prix_reference[symbole] = prix_actuel
+        return "NEUTRE", {}
 
-    # ── Filtre volume
+    variation_pct = (prix_actuel - prix_ref) / prix_ref * 100
+
+    df_15m    = await get_klines(session, symbole, interval=15, limite=50)
+    vol_ratio = 0.0
+    atr_val   = 0.0
+    if df_15m is not None and len(df_15m) >= 15:
+        vol_ratio = calc_volume_ratio(df_15m)
+        atr_val   = calc_atr(df_15m)
+
     if vol_ratio < VOLUME_MINI:
-        log.info(f"  {symbole} : Vol {vol_ratio:.2f}x < {VOLUME_MINI}x → skip")
+        log.info(f"  {symbole} : Vol {vol_ratio:.2f}x | Variation={variation_pct:+.2f}% → skip")
         return "NEUTRE", {}
 
     details = {
-        "atr":           atr_15m,
+        "atr":           atr_val,
         "vol_ratio":     vol_ratio,
-        "variation_pct": variation_pct,
+        "variation_pct": abs(variation_pct),
+        "prix_ref":      prix_ref,
+        "prix_actuel":   prix_actuel,
     }
 
-    log.info(f"  {symbole} ✅ {direction} | Variation={variation_pct:.2f}% | Vol={vol_ratio:.2f}x")
-    return direction, details
+    if variation_pct <= -SEUIL_MOUVEMENT_PCT:
+        log.info(f"  {symbole} ✅ ACHAT | Chute={variation_pct:.2f}% | Vol={vol_ratio:.2f}x")
+        prix_reference[symbole] = prix_actuel
+        return "ACHAT", details
+
+    if variation_pct >= SEUIL_MOUVEMENT_PCT:
+        log.info(f"  {symbole} ✅ VENTE | Montée={variation_pct:.2f}% | Vol={vol_ratio:.2f}x")
+        prix_reference[symbole] = prix_actuel
+        return "VENTE", details
+
+    log.info(f"  {symbole} : Variation={variation_pct:+.2f}% (seuil ±{SEUIL_MOUVEMENT_PCT}%)")
+    return "NEUTRE", {}
 
 # ═══════════════════════════════════════════════════════════════
 #  GESTION MISE DYNAMIQUE
 # ═══════════════════════════════════════════════════════════════
-def calculer_mise(capital, etat, multiplicateur_session):
+def calculer_mise(capital, etat, multiplicateur_session=1.0):
     nb_trades     = etat.get("nb_trades", 0)
     nb_wins       = etat.get("nb_wins", 0)
     wins_consec   = etat.get("wins_consecutifs", 0)
@@ -314,7 +301,7 @@ def calculer_mise(capital, etat, multiplicateur_session):
         mise *= BOOST_CONFIANCE
         log.info(f"  💪 Mise boostée +20% ({wins_consec} wins)")
 
-    mise *= (multiplicateur_session or 1.0)
+    mise *= multiplicateur_session
     mise  = max(mise, MISE_MIN)
     mise  = min(mise, capital * MISE_MAX_PCT)
     return round(mise, 2)
@@ -322,7 +309,7 @@ def calculer_mise(capital, etat, multiplicateur_session):
 # ═══════════════════════════════════════════════════════════════
 #  EXÉCUTION D'UN TRADE
 # ═══════════════════════════════════════════════════════════════
-async def executer_trade(session, symbole, direction, capital, details, etat, multiplicateur_session, etat_global):
+async def executer_trade(session, symbole, direction, capital, details, etat, etat_global):
     prix_entree = await get_prix_actuel(session, symbole)
     if prix_entree is None:
         async with trades_lock:
@@ -330,15 +317,24 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
         return "ERREUR", 0, 0, {}
 
     atr  = details.get("atr", 0)
-    mise = calculer_mise(capital, etat, multiplicateur_session)
+    mise = calculer_mise(capital, etat)
 
-    # Stop initial basé sur ATR × 2.50
     if direction == "ACHAT":
         stop_initial   = round(prix_entree - atr * ATR_STOP_INITIAL, 8)
         objectif_final = round(prix_entree + atr * ATR_STOP_INITIAL * 2, 8)
+        # Stop loss maximum -25€ — jamais plus de perte
+        stop_max_eur   = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
+        if stop_initial < stop_max_eur:
+            stop_initial = stop_max_eur
+            log.info(f"  ⚠️ Stop ajusté au max -25€ : {stop_initial}")
     else:
         stop_initial   = round(prix_entree + atr * ATR_STOP_INITIAL, 8)
         objectif_final = round(prix_entree - atr * ATR_STOP_INITIAL * 2, 8)
+        # Stop loss maximum -25€
+        stop_max_eur   = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
+        if stop_initial > stop_max_eur:
+            stop_initial = stop_max_eur
+            log.info(f"  ⚠️ Stop ajusté au max -25€ : {stop_initial}")
 
     # Numéro de trade sous lock
     async with trades_lock:
@@ -348,16 +344,17 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
     log.info(f"\n  {'='*55}")
     log.info(f"  TRADE #{numero_trade} [VÉRONIQUE973 V4] — {datetime.now().strftime('%H:%M:%S')}")
     log.info(f"  {symbole} ({direction})")
-    log.info(f"  Variation : {details.get('variation_pct', 0):.2f}% | Vol={details.get('vol_ratio', 0):.2f}x")
-    log.info(f"  Prix : {prix_entree} | Stop initial : {stop_initial}")
+    log.info(f"  Variation : {details.get('variation_pct', 0):.2f}% | "
+             f"Ref={details.get('prix_ref')} → {details.get('prix_actuel')}")
+    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | ATR={atr}")
+    log.info(f"  Prix entrée : {prix_entree} | Stop : {stop_initial}")
     log.info(f"  Mise : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€")
-    log.info(f"  Trailing : {len(TRAILING_PALIERS)} paliers progressifs sans plafond")
     log.info(f"  Trades ouverts : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n")
 
     await telegram(session,
         f"📊 <b>TRADE #{numero_trade} — VÉRONIQUE973 V4</b>\n"
         f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
-        f"Variation : {details.get('variation_pct', 0):.2f}%\n"
+        f"Variation : {details.get('variation_pct', 0):.2f}% depuis ref\n"
         f"Volume : {details.get('vol_ratio', 0):.2f}x\n"
         f"Prix : {prix_entree} | Stop : {stop_initial}\n"
         f"Mise : {mise}€ × x{LEVIER}\n"
@@ -365,15 +362,16 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
         f"🎯 Trailing progressif sans plafond"
     )
 
-    debut           = time.time()
-    dernier_log     = 0
-    prix_sortie     = prix_entree
-    meilleur_prix   = prix_entree
-    stop_actuel     = stop_initial
-    niveau_actuel   = ATR_STOP_INITIAL
-    pnl_max_atteint = 0.0
-    resultat_final  = None
-    gain_final      = 0.0
+    debut             = time.time()
+    dernier_log       = 0
+    prix_sortie       = prix_entree
+    meilleur_prix     = prix_entree
+    stop_actuel       = stop_initial
+    niveau_actuel     = ATR_STOP_INITIAL
+    pnl_max_atteint   = 0.0
+    break_even_active = False   # break-even pas encore activé
+    resultat_final    = None
+    gain_final        = 0.0
 
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
@@ -392,8 +390,28 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
         if pnl > pnl_max_atteint:
             pnl_max_atteint = pnl
 
-        # ── Trailing stop progressif
-        multiplicateur = get_trailing_multiplicateur(pnl_max_atteint)
+        # ── Garantie 0.75€ minimum — stop ne descend jamais sous ce gain
+        if not break_even_active and pnl_max_atteint >= 0.75:
+            # Calculer le prix qui correspond à +0.75€ de PnL garanti
+            if direction == "ACHAT":
+                prix_garanti = round(prix_entree * (1 + 0.75 / (mise * LEVIER)), 8)
+                if prix_garanti > stop_actuel:
+                    stop_actuel = prix_garanti
+            else:
+                prix_garanti = round(prix_entree * (1 - 0.75 / (mise * LEVIER)), 8)
+                if prix_garanti < stop_actuel:
+                    stop_actuel = prix_garanti
+            break_even_active = True
+            log.info(f"  🔒 0.75€ GARANTI [{symbole}] Stop → {stop_actuel} "
+                     f"(PnL max={pnl_max_atteint:.2f}€)")
+            await telegram(session,
+                f"🔒 <b>0.75€ garanti !</b>\n"
+                f"{symbole} | PnL max : +{pnl_max_atteint:.2f}€\n"
+                f"Stop verrouillé — minimum +0.75€ ✅"
+            )
+
+        # ── Trailing stop progressif sans plafond
+        multiplicateur    = get_trailing_multiplicateur(pnl_max_atteint)
         distance_trailing = atr * multiplicateur
 
         if direction == "ACHAT":
@@ -402,12 +420,22 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
             nouveau_stop = round(meilleur_prix - distance_trailing, 8)
             if nouveau_stop > stop_actuel:
                 stop_actuel = nouveau_stop
+            # 0.75€ garanti : stop ne descend jamais sous ce gain
+            if break_even_active:
+                stop_garanti = round(prix_entree * (1 + 0.75 / (mise * LEVIER)), 8)
+                if stop_actuel < stop_garanti:
+                    stop_actuel = stop_garanti
         else:
             if prix_actuel < meilleur_prix:
                 meilleur_prix = prix_actuel
             nouveau_stop = round(meilleur_prix + distance_trailing, 8)
             if nouveau_stop < stop_actuel:
                 stop_actuel = nouveau_stop
+            # 0.75€ garanti : stop ne monte jamais au dessus de ce gain
+            if break_even_active:
+                stop_garanti = round(prix_entree * (1 - 0.75 / (mise * LEVIER)), 8)
+                if stop_actuel > stop_garanti:
+                    stop_actuel = stop_garanti
 
         # ── Log changement de palier
         if multiplicateur != niveau_actuel:
@@ -415,8 +443,8 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
                 gain_protege = round((stop_actuel - prix_entree) / prix_entree * mise * LEVIER, 2)
             else:
                 gain_protege = round((prix_entree - stop_actuel) / prix_entree * mise * LEVIER, 2)
-            log.info(f"  📈 PALIER [{symbole}] PnL={pnl:.2f}€ → ATR×{multiplicateur} | "
-                     f"Stop={stop_actuel} | Protège≈{gain_protege:.2f}€")
+            log.info(f"  📈 PALIER [{symbole}] PnL={pnl:.2f}€ → "
+                     f"ATR×{multiplicateur} | Stop={stop_actuel} | Protège≈{gain_protege:.2f}€")
             await telegram(session,
                 f"📈 <b>Nouveau palier trailing</b>\n"
                 f"{symbole} | PnL={'+' if pnl>=0 else ''}{pnl:.2f}€\n"
@@ -432,8 +460,9 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
         duree = int((time.time() - debut) / 60)
 
         if time.time() - dernier_log >= 60:
+            be_flag = " 🔒BE" if break_even_active else ""
             log.info(f"  [{datetime.now().strftime('%H:%M:%S')}] {symbole} {prix_actuel} | "
-                     f"PnL {'+' if pnl>=0 else ''}{pnl:.2f}€ | "
+                     f"PnL {'+' if pnl>=0 else ''}{pnl:.2f}€{be_flag} | "
                      f"Stop={stop_actuel} (ATR×{multiplicateur}) | {duree}min")
             dernier_log = time.time()
 
@@ -447,13 +476,14 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
 
         if atteint_stop:
             resultat_final = "GAGNE" if pnl > 0 else "PERDU"
-            log.info(f"\n  🛑 STOP TRAILING [{symbole}] {'+' if pnl>=0 else ''}{pnl:.2f}€ "
+            log.info(f"\n  🛑 STOP TRAILING [{symbole}] "
+                     f"{'+' if pnl>=0 else ''}{pnl:.2f}€ "
                      f"(max={pnl_max_atteint:.2f}€) | {duree}min")
             await telegram(session,
                 f"🛑 <b>STOP TRAILING</b>\n"
                 f"{symbole} {direction}\n"
                 f"Résultat : {'+' if pnl>=0 else ''}{pnl:.2f}€\n"
-                f"PnL max atteint : +{pnl_max_atteint:.2f}€\n"
+                f"PnL max : +{pnl_max_atteint:.2f}€\n"
                 f"Durée : {duree} min"
             )
             gain_final = pnl
@@ -524,7 +554,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, mu
         'score':         None,
         'adx':           None,
         'atr':           details.get('atr'),
-        'rsi':           details.get('rsi_2h'),
+        'rsi':           None,
     })
     sauvegarder_etat(etat_global)
     afficher_tableau_de_bord(etat_global)
@@ -589,7 +619,8 @@ def afficher_tableau_de_bord(etat):
         log.info("  Derniers trades :")
         for h in etat["historique"][-5:]:
             icone = "✅" if h["resultat"] == "GAGNE" else "❌"
-            log.info(f"    {icone} {h['heure']} | {h['marche']} | {'+' if h['gain']>=0 else ''}{h['gain']}€")
+            log.info(f"    {icone} {h['heure']} | {h['marche']} | "
+                     f"{'+' if h['gain']>=0 else ''}{h['gain']}€")
     log.info(f"  {'='*55}")
 
 # ═══════════════════════════════════════════════════════════════
@@ -616,8 +647,8 @@ async def boucle_principale():
         await telegram(session,
             f"🚀 <b>BOT HUMAIN VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
             f"Capital : {round(etat['capital'],2)}€\n"
-            f"Signal : chute/montée ≥ {SEUIL_MOUVEMENT_PCT}% sur {NB_BOUGIES_SIGNAL} bougies\n"
-            f"Trailing stop progressif sans plafond\n"
+            f"Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis prix référence\n"
+            f"Surveillance temps réel | Trailing sans plafond\n"
             f"Kill switch : {KILL_SWITCH_JOUR}€/jour\n"
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -628,7 +659,8 @@ async def boucle_principale():
 
                 statut = verifier_protections(etat, etat["capital"])
                 if statut == "RUINE":
-                    await telegram(session, f"🚨 <b>SEUIL RUINE !</b>\nCapital : {etat['capital']}€\nBot arrêté !")
+                    await telegram(session,
+                        f"🚨 <b>SEUIL RUINE !</b>\nCapital : {etat['capital']}€\nBot arrêté !")
                     break
                 if statut in ("KILL_SWITCH", "COOLDOWN"):
                     await asyncio.sleep(60)
@@ -640,8 +672,8 @@ async def boucle_principale():
                     marches_disponibles = [m for m in MARCHES if m not in trades_ouverts]
 
                 if slots_libres <= 0:
-                    log.info(f"  {MAX_TRADES_SIMULTANES}/{MAX_TRADES_SIMULTANES} trades ouverts — attente...")
-                    await asyncio.sleep(PAUSE_ENTRE_TRADES)
+                    log.info(f"  {MAX_TRADES_SIMULTANES}/{MAX_TRADES_SIMULTANES} trades — attente...")
+                    await asyncio.sleep(PAUSE_SCAN)
                     continue
 
                 log.info(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scan "
@@ -658,7 +690,7 @@ async def boucle_principale():
                     log.info("  => Aucun signal.")
                     etat["nb_skips"] = etat.get("nb_skips", 0) + 1
                     sauvegarder_etat(etat)
-                    await asyncio.sleep(PAUSE_ENTRE_TRADES)
+                    await asyncio.sleep(PAUSE_SCAN)
                     continue
 
                 # Trier par variation la plus forte
@@ -683,11 +715,11 @@ async def boucle_principale():
                         executer_trade(
                             session, symbole, sig["direction"],
                             etat["capital"],
-                            sig["details"], etat, 1.0, etat
+                            sig["details"], etat, etat
                         )
                     )
 
-                await asyncio.sleep(PAUSE_ENTRE_TRADES)
+                await asyncio.sleep(PAUSE_SCAN)
 
             except KeyboardInterrupt:
                 log.info("Bot arrêté.")
