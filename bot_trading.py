@@ -436,10 +436,16 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             nouveau_stop = round(meilleur_prix + distance_trailing, 8)
             if nouveau_stop < stop_actuel:
                 stop_actuel = nouveau_stop
-            # 0.75€ garanti VENTE : stop ne monte jamais au dessus du prix garanti
+            # 0.75€ garanti VENTE :
+            # prix_garanti_vente = prix où pnl = +0.75€ si le prix remonte jusqu'au stop
+            # pnl = (prix_entree - stop) / prix_entree * mise * LEVIER = 0.75
+            # stop = prix_entree - 0.75 * prix_entree / (mise * LEVIER)
+            # Le stop ne doit JAMAIS descendre sous prix_garanti_vente
+            # car si stop < prix_garanti_vente → pnl à la sortie > 0.75€ ✅
+            # Si le trailing pousse stop TROP BAS → on le remonte à prix_garanti_vente
             if break_even_active:
                 prix_garanti_vente = round(prix_entree - 0.75 * prix_entree / (mise * LEVIER), 8)
-                if stop_actuel > prix_garanti_vente:
+                if stop_actuel < prix_garanti_vente:
                     stop_actuel = prix_garanti_vente
 
         # ── Log changement de palier
