@@ -1,8 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BOT HUMAIN — VÉRONIQUE973 V4                            ║
-║  Mean Reversion 0.40% | Surveillance prix temps réel            ║
-║  Trailing Stop Progressif Sans Plafond | 3 trades simultanés   ║
+║  Mean Reversion 0.50% | Surveillance prix temps réel            ║
+║  Lock Profits Paliers | 3 trades simultanés                     ║
 ║  Capital 500€ | Architecture async aiohttp                      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -45,27 +45,18 @@ STOP_LOSS_MAX_EUR       = 25.0   # perte maximum par trade en €
 # ── Stop initial
 ATR_STOP_INITIAL        = 2.50
 
-# ── Trailing stop progressif sans plafond
-# Format : (pnl_minimum, multiplicateur_atr)
-TRAILING_PALIERS = [
-    (100.0, 0.10),   # PnL > 100€ → ATR × 0.10 (très serré)
-    ( 50.0, 0.15),   # PnL > 50€  → ATR × 0.15
-    ( 25.0, 0.20),   # PnL > 25€  → ATR × 0.20
-    ( 12.0, 0.30),   # PnL > 12€  → ATR × 0.30
-    (  8.0, 0.50),   # PnL > 8€   → ATR × 0.50
-    (  5.0, 0.70),   # PnL > 5€   → ATR × 0.70
-    (  3.0, 1.00),   # PnL > 3€   → ATR × 1.00
-    (  1.5, 1.50),   # PnL > 1.5€ → ATR × 1.50
-    (  0.75, 2.00),  # PnL > 0.75€→ ATR × 2.00
-    (  0.0, 2.50),   # PnL ≥ 0€   → ATR × 2.50
-]
+# ── Lock profits par paliers fixes
+# Dès qu'un palier est atteint → ce gain est garanti pour toujours
+# Le bot sort quand le PnL redescend SOUS le dernier palier atteint
+LOCK_PALIERS = [0.75, 1.50, 3.0, 5.0, 8.0, 12.0, 18.0, 25.0, 35.0, 50.0, 75.0, 100.0, 150.0, 200.0]
 
-def get_trailing_multiplicateur(pnl):
-    """Retourne le multiplicateur ATR selon le PnL max atteint."""
-    for seuil, mult in TRAILING_PALIERS:
-        if pnl >= seuil:
-            return mult
-    return ATR_STOP_INITIAL
+def get_palier_lock(pnl_max):
+    """Retourne le gain garanti selon le PnL max atteint."""
+    lock = 0.0
+    for palier in LOCK_PALIERS:
+        if pnl_max >= palier:
+            lock = palier
+    return lock
 
 # ── Gestion mise dynamique
 WINS_CONFIANCE          = 3
@@ -119,7 +110,7 @@ log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
 log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
-log.info(f"  Trailing stop progressif : {len(TRAILING_PALIERS)} paliers sans plafond")
+log.info(f"  Lock paliers : {LOCK_PALIERS}")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
@@ -215,9 +206,6 @@ def calc_volume_ratio(df):
         return round(recent / moyenne, 2) if moyenne > 0 else 0.0
     except:
         return 0.0
-
-def calc_rsi(df, periode=14):
-    pass  # conservé pour usage futur si nécessaire
 
 # ═══════════════════════════════════════════════════════════════
 #  DÉTECTION SIGNAL — SURVEILLANCE TEMPS RÉEL
@@ -359,17 +347,14 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         f"Prix : {prix_entree} | Stop : {stop_initial}\n"
         f"Mise : {mise}€ × x{LEVIER}\n"
         f"Trades : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n"
-        f"🎯 Trailing progressif sans plafond"
+        f"🎯 Lock paliers : {LOCK_PALIERS[:4]}..."
     )
 
     debut             = time.time()
     dernier_log       = 0
     prix_sortie       = prix_entree
-    meilleur_prix     = prix_entree
-    stop_actuel       = stop_initial
-    niveau_actuel     = ATR_STOP_INITIAL
     pnl_max_atteint   = 0.0
-    break_even_active = False   # break-even pas encore activé
+    lock_actuel       = 0.0    # gain garanti actuellement
     resultat_final    = None
     gain_final        = 0.0
 
@@ -390,91 +375,44 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         if pnl > pnl_max_atteint:
             pnl_max_atteint = pnl
 
-        # ── Garantie 0.75€ minimum
-        if not break_even_active and pnl_max_atteint >= 0.75:
-            if direction == "ACHAT":
-                # ACHAT : prix monte → gain. Stop garanti = prix qui donne +0.75€
-                # pnl = (prix - entree) / entree * mise * LEVIER = 0.75
-                # prix_garanti = entree + 0.75 * entree / (mise * LEVIER)
-                prix_garanti = round(prix_entree + 0.75 * prix_entree / (mise * LEVIER), 8)
-                if prix_garanti > stop_actuel:
-                    stop_actuel = prix_garanti
-            else:
-                # VENTE : prix descend → gain. Stop garanti = prix qui donne +0.75€
-                # pnl = (entree - prix) / entree * mise * LEVIER = 0.75
-                # prix_garanti = entree - 0.75 * entree / (mise * LEVIER)
-                prix_garanti = round(prix_entree - 0.75 * prix_entree / (mise * LEVIER), 8)
-                if prix_garanti < stop_actuel:
-                    stop_actuel = prix_garanti
-            break_even_active = True
-            log.info(f"  🔒 0.75€ GARANTI [{symbole}] Stop → {stop_actuel} "
+        # ── Lock paliers — gain garanti progressif
+        nouveau_lock = get_palier_lock(pnl_max_atteint)
+        if nouveau_lock > lock_actuel:
+            lock_actuel = nouveau_lock
+            log.info(f"  🔒 LOCK {lock_actuel}€ GARANTI [{symbole}] "
                      f"(PnL max={pnl_max_atteint:.2f}€)")
             await telegram(session,
-                f"🔒 <b>0.75€ garanti !</b>\n"
+                f"🔒 <b>{lock_actuel}€ garanti !</b>\n"
                 f"{symbole} | PnL max : +{pnl_max_atteint:.2f}€\n"
-                f"Stop verrouillé — minimum +0.75€ ✅"
+                f"Gain verrouillé ✅"
             )
 
-        # ── Trailing stop progressif sans plafond
-        multiplicateur    = get_trailing_multiplicateur(pnl_max_atteint)
-        distance_trailing = atr * multiplicateur
-
-        if direction == "ACHAT":
-            if prix_actuel > meilleur_prix:
-                meilleur_prix = prix_actuel
-            nouveau_stop = round(meilleur_prix - distance_trailing, 8)
-            if nouveau_stop > stop_actuel:
-                stop_actuel = nouveau_stop
-            # 0.75€ garanti ACHAT : stop ne descend jamais sous le prix garanti
-            if break_even_active:
-                prix_garanti_achat = round(prix_entree + 0.75 * prix_entree / (mise * LEVIER), 8)
-                if stop_actuel < prix_garanti_achat:
-                    stop_actuel = prix_garanti_achat
-        else:
-            if prix_actuel < meilleur_prix:
-                meilleur_prix = prix_actuel
-            nouveau_stop = round(meilleur_prix + distance_trailing, 8)
-            if nouveau_stop < stop_actuel:
-                stop_actuel = nouveau_stop
-            # 0.75€ garanti VENTE :
-            # prix_garanti_vente = prix où pnl = +0.75€ si le prix remonte jusqu'au stop
-            # pnl = (prix_entree - stop) / prix_entree * mise * LEVIER = 0.75
-            # stop = prix_entree - 0.75 * prix_entree / (mise * LEVIER)
-            # Le stop ne doit JAMAIS descendre sous prix_garanti_vente
-            # car si stop < prix_garanti_vente → pnl à la sortie > 0.75€ ✅
-            # Si le trailing pousse stop TROP BAS → on le remonte à prix_garanti_vente
-            if break_even_active:
-                prix_garanti_vente = round(prix_entree - 0.75 * prix_entree / (mise * LEVIER), 8)
-                if stop_actuel < prix_garanti_vente:
-                    stop_actuel = prix_garanti_vente
-
-        # ── Log changement de palier
-        if multiplicateur != niveau_actuel:
-            if direction == "ACHAT":
-                gain_protege = round((stop_actuel - prix_entree) / prix_entree * mise * LEVIER, 2)
-            else:
-                gain_protege = round((prix_entree - stop_actuel) / prix_entree * mise * LEVIER, 2)
-            log.info(f"  📈 PALIER [{symbole}] PnL={pnl:.2f}€ → "
-                     f"ATR×{multiplicateur} | Stop={stop_actuel} | Protège≈{gain_protege:.2f}€")
+        # ── Sortie lock : PnL redescend sous le dernier palier atteint
+        if lock_actuel > 0 and pnl < lock_actuel and pnl_max_atteint >= lock_actuel:
+            duree = int((time.time() - debut) / 60)
+            log.info(f"\n  🔒 SORTIE LOCK [{symbole}] +{lock_actuel}€ "
+                     f"(max={pnl_max_atteint:.2f}€) | {duree}min")
             await telegram(session,
-                f"📈 <b>Nouveau palier trailing</b>\n"
-                f"{symbole} | PnL={'+' if pnl>=0 else ''}{pnl:.2f}€\n"
-                f"Trailing : ATR×{multiplicateur}\n"
-                f"Gain protégé : ≈{gain_protege:.2f}€"
+                f"🔒 <b>SORTIE LOCK</b>\n"
+                f"{symbole} {direction}\n"
+                f"Gain : <b>+{lock_actuel}€</b>\n"
+                f"PnL max : +{pnl_max_atteint:.2f}€\n"
+                f"Durée : {duree} min"
             )
-            niveau_actuel = multiplicateur
+            resultat_final = "GAGNE"
+            gain_final     = lock_actuel
+            break
 
-        # ── Vérification stop
-        atteint_stop = (prix_actuel <= stop_actuel if direction == "ACHAT"
-                        else prix_actuel >= stop_actuel)
+        # ── Stop loss initial — protection max -25€
+        atteint_stop = (prix_actuel <= stop_initial if direction == "ACHAT"
+                        else prix_actuel >= stop_initial)
 
         duree = int((time.time() - debut) / 60)
 
         if time.time() - dernier_log >= 60:
-            be_flag = " 🔒BE" if break_even_active else ""
+            lock_flag = f" 🔒{lock_actuel}€" if lock_actuel > 0 else ""
             log.info(f"  [{datetime.now().strftime('%H:%M:%S')}] {symbole} {prix_actuel} | "
-                     f"PnL {'+' if pnl>=0 else ''}{pnl:.2f}€{be_flag} | "
-                     f"Stop={stop_actuel} (ATR×{multiplicateur}) | {duree}min")
+                     f"PnL {'+' if pnl>=0 else ''}{pnl:.2f}€{lock_flag} | {duree}min")
             dernier_log = time.time()
 
         trade_info = {
@@ -487,14 +425,12 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
 
         if atteint_stop:
             resultat_final = "GAGNE" if pnl > 0 else "PERDU"
-            log.info(f"\n  🛑 STOP TRAILING [{symbole}] "
-                     f"{'+' if pnl>=0 else ''}{pnl:.2f}€ "
-                     f"(max={pnl_max_atteint:.2f}€) | {duree}min")
+            log.info(f"\n  🛑 STOP [{symbole}] "
+                     f"{'+' if pnl>=0 else ''}{pnl:.2f}€ | {duree}min")
             await telegram(session,
-                f"🛑 <b>STOP TRAILING</b>\n"
+                f"🛑 <b>STOP</b>\n"
                 f"{symbole} {direction}\n"
                 f"Résultat : {'+' if pnl>=0 else ''}{pnl:.2f}€\n"
-                f"PnL max : +{pnl_max_atteint:.2f}€\n"
                 f"Durée : {duree} min"
             )
             gain_final = pnl
@@ -659,7 +595,7 @@ async def boucle_principale():
             f"🚀 <b>BOT HUMAIN VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
             f"Capital : {round(etat['capital'],2)}€\n"
             f"Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis prix référence\n"
-            f"Surveillance temps réel | Trailing sans plafond\n"
+            f"Lock paliers | Stop max -{STOP_LOSS_MAX_EUR}€\n"
             f"Kill switch : {KILL_SWITCH_JOUR}€/jour\n"
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
