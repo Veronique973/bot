@@ -42,17 +42,16 @@ SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
 STOP_LOSS_MAX_EUR       = 10.0   # perte maximum par trade en €
 
-# ── Lock profits par paliers proportionnels à la mise
-# Les paliers s'adaptent automatiquement selon la mise × levier
-# Exprimés en % de la position
+# ── Lock profits par paliers proportionnels au capital
+# Les paliers s'adaptent automatiquement selon le capital actuel
+# Exprimés en % du capital
 LOCK_PALIERS_PCT = [0.15, 0.20, 0.30, 0.60, 1.00, 1.60, 2.40, 3.60, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 40.00]
 
-def get_palier_lock(pnl_max, mise):
-    """Retourne le gain garanti selon le PnL max atteint — proportionnel à la mise."""
-    position = mise * LEVIER
+def get_palier_lock(pnl_max, capital):
+    """Retourne le gain garanti selon le PnL max atteint — proportionnel au capital."""
     lock = 0.0
     for pct in LOCK_PALIERS_PCT:
-        palier_eur = round(position * pct / 100, 2)
+        palier_eur = round(capital * pct / 100, 2)
         if pnl_max >= palier_eur:
             lock = palier_eur
     return lock
@@ -118,7 +117,7 @@ log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
 log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
-log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% de la position")
+log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
@@ -373,8 +372,8 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         if pnl > pnl_max_atteint:
             pnl_max_atteint = pnl
 
-        # ── Lock paliers — gain garanti progressif
-        nouveau_lock = get_palier_lock(pnl_max_atteint, mise)
+        # ── Lock paliers — gain garanti progressif basé sur le capital
+        nouveau_lock = get_palier_lock(pnl_max_atteint, capital)
         if nouveau_lock > lock_actuel:
             lock_actuel = nouveau_lock
             log.info(f"  🔒 LOCK {lock_actuel}€ GARANTI [{symbole}] "
