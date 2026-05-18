@@ -504,6 +504,24 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     sauvegarder_etat(etat_global)
     afficher_tableau_de_bord(etat_global)
 
+    # ── Rapport Telegram après chaque trade
+    nb_trades = etat_global.get("nb_trades", 0)
+    nb_wins   = etat_global.get("nb_wins", 0)
+    win_rate  = (nb_wins / nb_trades * 100) if nb_trades > 0 else 0
+    perf      = (etat_global["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100
+    await telegram(session,
+        f"📈 <b>RAPPORT VÉRONIQUE973</b>\n"
+        f"Capital : <b>{round(etat_global['capital'],2)}€</b> "
+        f"({'+' if perf>=0 else ''}{round(perf,2)}%)\n"
+        f"PnL jour : {'+' if etat_global.get('pnl_jour',0)>=0 else ''}"
+        f"{round(etat_global.get('pnl_jour',0),2)}€\n"
+        f"Trades : {nb_trades} | WR : {round(win_rate,1)}%\n"
+        f"Gagné : +{round(etat_global.get('total_gagne',0),2)}€ | "
+        f"Perdu : -{round(etat_global.get('total_perdu',0),2)}€\n"
+        f"<b>NET : {'+' if etat_global.get('cumul_net',0)>=0 else ''}"
+        f"{round(etat_global.get('cumul_net',0),2)}€</b>"
+    )
+
     return resultat_final, gain_final, mise, trade_info
 
 # ═══════════════════════════════════════════════════════════════
