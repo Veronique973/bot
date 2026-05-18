@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BOT HUMAIN — VÉRONIQUE973 V4                            ║
 ║  Mean Reversion 0.50% | Surveillance prix temps réel            ║
-║  Lock Profits Paliers | 3 trades simultanés                     ║
+║  Lock Profits Paliers | 5 trades simultanés                     ║
 ║  Capital 500€ | Architecture async aiohttp                      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -35,15 +35,12 @@ MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
 TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
-MAX_TRADES_SIMULTANES   = 3
+MAX_TRADES_SIMULTANES   = 5
 
 # ── Détection signal mean reversion — surveillance temps réel
 SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
 STOP_LOSS_MAX_EUR       = 25.0   # perte maximum par trade en €
-
-# ── Stop initial
-ATR_STOP_INITIAL        = 2.50
 
 # ── Lock profits par paliers fixes
 # Dès qu'un palier est atteint → ce gain est garanti pour toujours
@@ -304,25 +301,15 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             trades_ouverts.pop(symbole, None)
         return "ERREUR", 0, 0, {}
 
-    atr  = details.get("atr", 0)
     mise = calculer_mise(capital, etat)
 
+    # Stop loss = uniquement le max -25€ — pas de stop ATR
     if direction == "ACHAT":
-        stop_initial   = round(prix_entree - atr * ATR_STOP_INITIAL, 8)
-        objectif_final = round(prix_entree + atr * ATR_STOP_INITIAL * 2, 8)
-        # Stop loss maximum -25€ — jamais plus de perte
-        stop_max_eur   = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
-        if stop_initial < stop_max_eur:
-            stop_initial = stop_max_eur
-            log.info(f"  ⚠️ Stop ajusté au max -25€ : {stop_initial}")
+        stop_initial   = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
+        objectif_final = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER) * 2), 8)
     else:
-        stop_initial   = round(prix_entree + atr * ATR_STOP_INITIAL, 8)
-        objectif_final = round(prix_entree - atr * ATR_STOP_INITIAL * 2, 8)
-        # Stop loss maximum -25€
-        stop_max_eur   = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
-        if stop_initial > stop_max_eur:
-            stop_initial = stop_max_eur
-            log.info(f"  ⚠️ Stop ajusté au max -25€ : {stop_initial}")
+        stop_initial   = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
+        objectif_final = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER) * 2), 8)
 
     # Numéro de trade sous lock
     async with trades_lock:
@@ -334,7 +321,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     log.info(f"  {symbole} ({direction})")
     log.info(f"  Variation : {details.get('variation_pct', 0):.2f}% | "
              f"Ref={details.get('prix_ref')} → {details.get('prix_actuel')}")
-    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | ATR={atr}")
+    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | Stop max : -{STOP_LOSS_MAX_EUR}€")
     log.info(f"  Prix entrée : {prix_entree} | Stop : {stop_initial}")
     log.info(f"  Mise : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€")
     log.info(f"  Trades ouverts : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n")
@@ -500,7 +487,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         'duree_minutes': trade_info['duree_minutes'],
         'score':         None,
         'adx':           None,
-        'atr':           details.get('atr'),
+        'atr':           None,
         'rsi':           None,
     })
     sauvegarder_etat(etat_global)
