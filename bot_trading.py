@@ -42,17 +42,19 @@ SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
 STOP_LOSS_MAX_EUR       = 10.0   # perte maximum par trade en €
 
-# ── Lock profits par paliers fixes
-# Dès qu'un palier est atteint → ce gain est garanti pour toujours
-# Le bot sort quand le PnL redescend SOUS le dernier palier atteint
-LOCK_PALIERS = [0.75, 1.0, 1.50, 3.0, 5.0, 8.0, 12.0, 18.0, 25.0, 35.0, 50.0, 75.0, 100.0, 150.0, 200.0]
+# ── Lock profits par paliers proportionnels à la mise
+# Les paliers s'adaptent automatiquement selon la mise × levier
+# Exprimés en % de la position
+LOCK_PALIERS_PCT = [0.15, 0.20, 0.30, 0.60, 1.00, 1.60, 2.40, 3.60, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 40.00]
 
-def get_palier_lock(pnl_max):
-    """Retourne le gain garanti selon le PnL max atteint."""
+def get_palier_lock(pnl_max, mise):
+    """Retourne le gain garanti selon le PnL max atteint — proportionnel à la mise."""
+    position = mise * LEVIER
     lock = 0.0
-    for palier in LOCK_PALIERS:
-        if pnl_max >= palier:
-            lock = palier
+    for pct in LOCK_PALIERS_PCT:
+        palier_eur = round(position * pct / 100, 2)
+        if pnl_max >= palier_eur:
+            lock = palier_eur
     return lock
 
 # ── Gestion mise dynamique
@@ -116,7 +118,7 @@ log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
 log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
-log.info(f"  Lock paliers : {LOCK_PALIERS}")
+log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% de la position")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
@@ -312,7 +314,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
 
     mise = calculer_mise(capital, etat)
 
-    # Stop loss = uniquement le max -25€ — pas de stop ATR
+    # Stop loss = uniquement le max -10€ — pas de stop ATR
     if direction == "ACHAT":
         stop_initial   = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
         objectif_final = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER) * 2), 8)
@@ -343,7 +345,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         f"Prix : {prix_entree} | Stop : {stop_initial}\n"
         f"Mise : {mise}€ × x{LEVIER}\n"
         f"Trades : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n"
-        f"🎯 Lock paliers : {LOCK_PALIERS[:4]}..."
+        f"🎯 Lock paliers : {LOCK_PALIERS_PCT[:4]}%..."
     )
 
     debut             = time.time()
@@ -372,7 +374,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             pnl_max_atteint = pnl
 
         # ── Lock paliers — gain garanti progressif
-        nouveau_lock = get_palier_lock(pnl_max_atteint)
+        nouveau_lock = get_palier_lock(pnl_max_atteint, mise)
         if nouveau_lock > lock_actuel:
             lock_actuel = nouveau_lock
             log.info(f"  🔒 LOCK {lock_actuel}€ GARANTI [{symbole}] "
