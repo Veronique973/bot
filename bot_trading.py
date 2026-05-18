@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BOT HUMAIN — VÉRONIQUE973 V4                            ║
 ║  Mean Reversion 0.50% | Surveillance prix temps réel            ║
-║  Lock Profits Paliers | 5 trades simultanés                     ║
+║  Lock Profits Paliers | 10 trades simultanés                    ║
 ║  Capital 500€ | Architecture async aiohttp                      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -35,7 +35,7 @@ MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
 TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
-MAX_TRADES_SIMULTANES   = 5
+MAX_TRADES_SIMULTANES   = 10
 
 # ── Détection signal mean reversion — surveillance temps réel
 SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
@@ -73,25 +73,34 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 MARCHES = [
-    "ETHUSDT", "XRPUSDT", "SOLUSDT",  "ADAUSDT",
+    "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
     "LINKUSDT", "ATOMUSDT", "AVAXUSDT", "NEARUSDT",
-    "DOTUSDT", "DOGEUSDT", "LTCUSDT",  "ALGOUSDT", "TRXUSDT"
+    "DOTUSDT",  "DOGEUSDT", "LTCUSDT",  "ALGOUSDT",
+    "TRXUSDT",  "UNIUSDT",  "FILUSDT",  "AAVEUSDT",
+    "POLUSDT",  "APEUSDT",  "ARBUSDT",  "FTMUSDT"
 ]
 
 KRAKEN_SYMBOLS = {
-    "ETHUSDT":  "XETHZUSD",
-    "XRPUSDT":  "XXRPZUSD",
-    "SOLUSDT":  "SOLUSD",
-    "ADAUSDT":  "ADAUSD",
-    "LINKUSDT": "LINKUSD",
-    "ATOMUSDT": "ATOMUSD",
-    "AVAXUSDT": "AVAXUSD",
-    "NEARUSDT": "NEARUSD",
-    "DOTUSDT":  "DOTUSD",
-    "DOGEUSDT": "XDGUSD",
-    "LTCUSDT":  "XLTCZUSD",
-    "ALGOUSDT": "ALGOUSD",
-    "TRXUSDT":  "TRXUSD",
+    "ETHUSDT":   "XETHZUSD",
+    "XRPUSDT":   "XXRPZUSD",
+    "SOLUSDT":   "SOLUSD",
+    "ADAUSDT":   "ADAUSD",
+    "LINKUSDT":  "LINKUSD",
+    "ATOMUSDT":  "ATOMUSD",
+    "AVAXUSDT":  "AVAXUSD",
+    "NEARUSDT":  "NEARUSD",
+    "DOTUSDT":   "DOTUSD",
+    "DOGEUSDT":  "XDGUSD",
+    "LTCUSDT":   "XLTCZUSD",
+    "ALGOUSDT":  "ALGOUSD",
+    "TRXUSDT":   "TRXUSD",
+    "UNIUSDT":   "UNIUSD",
+    "FILUSDT":   "FILUSD",
+    "AAVEUSDT":  "AAVEUSD",
+    "POLUSDT":   "POLUSD",    # MATIC rebrandé POL sur Kraken
+    "APEUSDT":   "APEUSD",
+    "ARBUSDT":   "ARBUSD",    # Arbitrum — très liquide
+    "FTMUSDT":   "FTMUSD",    # Fantom — bonne liquidité
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -576,7 +585,7 @@ async def boucle_principale():
 
     afficher_tableau_de_bord(etat)
 
-    connector = aiohttp.TCPConnector(limit=20)
+    connector = aiohttp.TCPConnector(limit=50)
     async with aiohttp.ClientSession(connector=connector) as session:
         await telegram(session,
             f"🚀 <b>BOT HUMAIN VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
