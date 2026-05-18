@@ -45,7 +45,7 @@ STOP_LOSS_MAX_EUR       = 25.0   # perte maximum par trade en €
 # ── Lock profits par paliers fixes
 # Dès qu'un palier est atteint → ce gain est garanti pour toujours
 # Le bot sort quand le PnL redescend SOUS le dernier palier atteint
-LOCK_PALIERS = [0.75, 1.50, 3.0, 5.0, 8.0, 12.0, 18.0, 25.0, 35.0, 50.0, 75.0, 100.0, 150.0, 200.0]
+LOCK_PALIERS = [1.0, 1.50, 3.0, 5.0, 8.0, 12.0, 18.0, 25.0, 35.0, 50.0, 75.0, 100.0, 150.0, 200.0]
 
 def get_palier_lock(pnl_max):
     """Retourne le gain garanti selon le PnL max atteint."""
