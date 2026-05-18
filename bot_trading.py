@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BOT HUMAIN — VÉRONIQUE973 V4                            ║
 ║  Mean Reversion 0.50% | Surveillance prix temps réel            ║
-║  Lock Profits Paliers | 10 trades simultanés                    ║
+║  Lock Profits Paliers | 20 trades simultanés                    ║
 ║  Capital 500€ | Architecture async aiohttp                      ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -35,12 +35,12 @@ MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
 TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
-MAX_TRADES_SIMULTANES   = 10
+MAX_TRADES_SIMULTANES   = 20
 
 # ── Détection signal mean reversion — surveillance temps réel
 SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
-STOP_LOSS_MAX_EUR       = 25.0   # perte maximum par trade en €
+STOP_LOSS_MAX_EUR       = 10.0   # perte maximum par trade en €
 
 # ── Lock profits par paliers fixes
 # Dès qu'un palier est atteint → ce gain est garanti pour toujours
@@ -399,7 +399,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             gain_final     = lock_actuel
             break
 
-        # ── Stop loss initial — protection max -25€
+        # ── Stop loss initial — protection max -10€
         atteint_stop = (prix_actuel <= stop_initial if direction == "ACHAT"
                         else prix_actuel >= stop_initial)
 
