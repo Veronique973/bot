@@ -40,7 +40,7 @@ MAX_TRADES_SIMULTANES   = 20
 # ── Détection signal mean reversion — surveillance temps réel
 SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
-STOP_LOSS_MAX_EUR       = 10.0   # perte maximum par trade en €
+STOP_LOSS_PCT           = 2.0    # perte maximum = 2% du capital (comme les paliers)
 
 # ── Lock profits par paliers proportionnels au capital
 # Les paliers s'adaptent automatiquement selon le capital actuel
@@ -313,13 +313,17 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
 
     mise = calculer_mise(capital, etat)
 
-    # Stop loss = uniquement le max -10€ — pas de stop ATR
+    # Stop loss proportionnel au capital — 2% du capital
+    # Cohérent avec les paliers qui sont aussi en % du capital
+    stop_loss_eur = round(capital * STOP_LOSS_PCT / 100, 2)
+
+    # Stop loss initial — protection max proportionnelle
     if direction == "ACHAT":
-        stop_initial   = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
-        objectif_final = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER) * 2), 8)
+        stop_initial   = round(prix_entree * (1 - stop_loss_eur / (mise * LEVIER)), 8)
+        objectif_final = round(prix_entree * (1 + stop_loss_eur / (mise * LEVIER) * 2), 8)
     else:
-        stop_initial   = round(prix_entree * (1 + STOP_LOSS_MAX_EUR / (mise * LEVIER)), 8)
-        objectif_final = round(prix_entree * (1 - STOP_LOSS_MAX_EUR / (mise * LEVIER) * 2), 8)
+        stop_initial   = round(prix_entree * (1 + stop_loss_eur / (mise * LEVIER)), 8)
+        objectif_final = round(prix_entree * (1 - stop_loss_eur / (mise * LEVIER) * 2), 8)
 
     # Numéro de trade sous lock
     async with trades_lock:
@@ -331,7 +335,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     log.info(f"  {symbole} ({direction})")
     log.info(f"  Variation : {details.get('variation_pct', 0):.2f}% | "
              f"Ref={details.get('prix_ref')} → {details.get('prix_actuel')}")
-    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | Stop max : -{STOP_LOSS_MAX_EUR}€")
+    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | Stop max : -{stop_loss_eur}€ ({STOP_LOSS_PCT}% capital)")
     log.info(f"  Prix entrée : {prix_entree} | Stop : {stop_initial}")
     log.info(f"  Mise : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€")
     log.info(f"  Trades ouverts : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n")
@@ -400,7 +404,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             gain_final     = lock_actuel
             break
 
-        # ── Stop loss initial — protection max -10€
+        # ── Stop loss initial — protection max -2% du capital
         atteint_stop = (prix_actuel <= stop_initial if direction == "ACHAT"
                         else prix_actuel >= stop_initial)
 
@@ -610,7 +614,7 @@ async def boucle_principale():
             f"🚀 <b>BOT HUMAIN VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
             f"Capital : {round(etat['capital'],2)}€\n"
             f"Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis prix référence\n"
-            f"Lock paliers | Stop max -{STOP_LOSS_MAX_EUR}€\n"
+            f"Lock paliers | Stop max -{STOP_LOSS_PCT}% du capital\n"
             f"Kill switch : {KILL_SWITCH_JOUR}€/jour\n"
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
