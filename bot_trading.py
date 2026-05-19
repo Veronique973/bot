@@ -107,9 +107,12 @@ KRAKEN_SYMBOLS = {
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
 # ═══════════════════════════════════════════════════════════════
-trades_ouverts  = {}    # { symbole: True }
-prix_reference  = {}    # { symbole: prix_au_moment_du_scan }
-trades_lock     = None  # initialisé dans boucle_principale()
+trades_ouverts    = {}    # { symbole: True }
+prix_reference    = {}    # { symbole: prix_au_moment_du_scan }
+cooldown_marches  = {}    # { symbole: timestamp_fin_cooldown }
+trades_lock       = None  # initialisé dans boucle_principale()
+
+COOLDOWN_APRES_TRADE = 300  # 5 minutes de pause par marché après fermeture d'un trade
 
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
@@ -118,6 +121,7 @@ log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} tra
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
+log.info(f"  Cooldown marché : {COOLDOWN_APRES_TRADE//60} min après chaque trade")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
@@ -446,9 +450,12 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             gain_final = pnl
             break
 
-    # Libérer le marché
+    # Libérer le marché + activer cooldown 5 minutes
     async with trades_lock:
         trades_ouverts.pop(symbole, None)
+        cooldown_marches[symbole] = time.time() + COOLDOWN_APRES_TRADE
+        log.info(f"  ❄️ Cooldown {COOLDOWN_APRES_TRADE//60}min [{symbole}] — "
+                 f"prochain signal dans 5 min")
 
     # Mettre à jour l'état global sous lock
     async with trades_lock:
@@ -851,7 +858,11 @@ async def boucle_principale():
 
                 async with trades_lock:
                     slots_libres        = MAX_TRADES_SIMULTANES - len(trades_ouverts)
-                    marches_disponibles = [m for m in MARCHES if m not in trades_ouverts]
+                    marches_disponibles = [
+                        m for m in MARCHES
+                        if m not in trades_ouverts
+                        and time.time() >= cooldown_marches.get(m, 0)
+                    ]
 
                 if slots_libres <= 0:
                     log.info(f"  {MAX_TRADES_SIMULTANES}/{MAX_TRADES_SIMULTANES} trades — attente...")
