@@ -563,18 +563,26 @@ def reset_pnl_jour_si_nouveau_jour(etat):
 
 async def envoyer_rapport_hebdomadaire(session, etat):
     """
-    Envoie chaque lundi matin le classement des marchés
-    par gain total de la semaine écoulée.
+    Envoie chaque lundi matin :
+    1. Le graphique de progression du capital (image PNG)
+    2. Le classement des marchés par gain (texte)
     """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import io
+    from datetime import timedelta
+
     historique = etat.get("historique", [])
     if not historique:
         return
 
-    # Calculer le gain par marché sur les 7 derniers jours
-    from datetime import timedelta
-    maintenant    = datetime.now()
+    maintenant     = datetime.now()
     il_y_a_7_jours = (maintenant - timedelta(days=7)).strftime('%Y-%m-%d')
+    date_debut     = (maintenant - timedelta(days=7)).strftime('%d/%m')
+    date_fin       = maintenant.strftime('%d/%m/%Y')
 
+    # ── Gains par marché sur 7 jours
     gains_par_marche = {}
     for h in historique:
         if h.get("heure", "") >= il_y_a_7_jours:
@@ -584,16 +592,124 @@ async def envoyer_rapport_hebdomadaire(session, etat):
                 gains_par_marche.get(marche, 0) + gain, 2
             )
 
+    # ── Capital par jour sur 7 jours
+    capital_par_jour = {}
+    for h in historique:
+        if h.get("heure", "") >= il_y_a_7_jours:
+            jour = h.get("heure", "")[:10]
+            capital_par_jour[jour] = h.get("capital", etat["capital"])
+
+    jours_tries  = sorted(capital_par_jour.keys())
+    capitaux     = [capital_par_jour[j] for j in jours_tries]
+    labels_jours = [j[5:] for j in jours_tries]  # MM-DD
+
+    # ── Générer le graphique
+    try:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7),
+                                        gridspec_kw={'height_ratios': [3, 1]})
+        fig.patch.set_facecolor('#1a1a2e')
+
+        # Courbe capital
+        ax1.set_facecolor('#16213e')
+        if len(capitaux) >= 2:
+            ax1.plot(range(len(jours_tries)), capitaux,
+                     color='#e94560', linewidth=2.5,
+                     marker='o', markersize=7,
+                     markerfacecolor='white', markeredgecolor='#e94560',
+                     markeredgewidth=2)
+            ax1.fill_between(range(len(jours_tries)), capitaux, CAPITAL_INITIAL,
+                              where=[c >= CAPITAL_INITIAL for c in capitaux],
+                              color='#e94560', alpha=0.15)
+            ax1.fill_between(range(len(jours_tries)), capitaux, CAPITAL_INITIAL,
+                              where=[c < CAPITAL_INITIAL for c in capitaux],
+                              color='#ff4444', alpha=0.25)
+
+        ax1.axhline(y=CAPITAL_INITIAL, color='#ffffff',
+                    linewidth=1, linestyle='--', alpha=0.4)
+
+        for i, (jour, cap) in enumerate(zip(jours_tries, capitaux)):
+            couleur = '#00ff88' if cap >= CAPITAL_INITIAL else '#ff4444'
+            ax1.annotate(f'{cap}€', xy=(i, cap),
+                         xytext=(0, 12), textcoords='offset points',
+                         ha='center', fontsize=8, color=couleur, fontweight='bold')
+
+        ax1.set_xticks(range(len(jours_tries)))
+        ax1.set_xticklabels(labels_jours, color='#aaaaaa', fontsize=9)
+        ax1.set_ylabel('Capital (€)', color='#aaaaaa', fontsize=10)
+        ax1.tick_params(colors='#aaaaaa')
+        for spine in ax1.spines.values():
+            spine.set_color('#333366')
+        ax1.grid(True, alpha=0.1, color='#ffffff')
+
+        net  = etat["capital"] - CAPITAL_INITIAL
+        perf = (net / CAPITAL_INITIAL) * 100
+        ax1.set_title(
+            f'VERONIQUE973 V4 — Progression du capital\n'
+            f'NET : {"+"+str(round(net,2))+"€" if net>=0 else str(round(net,2))+"€"}'
+            f' ({"+"+str(round(perf,2))+"%" if perf>=0 else str(round(perf,2))+"%"})'
+            f' | Capital : {etat["capital"]}€',
+            color='white', fontsize=11, fontweight='bold', pad=12)
+
+        # Barres PnL journalier
+        ax2.set_facecolor('#16213e')
+        pnl_valeurs = []
+        for i, jour in enumerate(jours_tries):
+            if i == 0:
+                pnl_valeurs.append(capitaux[0] - CAPITAL_INITIAL)
+            else:
+                pnl_valeurs.append(round(capitaux[i] - capitaux[i-1], 2))
+
+        couleurs = ['#00ff88' if p >= 0 else '#ff4444' for p in pnl_valeurs]
+        bars = ax2.bar(range(len(jours_tries)), pnl_valeurs,
+                        color=couleurs, alpha=0.8, width=0.6)
+        ax2.axhline(y=0, color='#ffffff', linewidth=0.8, alpha=0.4)
+        ax2.set_xticks(range(len(jours_tries)))
+        ax2.set_xticklabels(labels_jours, color='#aaaaaa', fontsize=9)
+        ax2.set_ylabel('PnL jour (€)', color='#aaaaaa', fontsize=9)
+        ax2.tick_params(colors='#aaaaaa')
+        for spine in ax2.spines.values():
+            spine.set_color('#333366')
+        ax2.grid(True, alpha=0.1, color='#ffffff', axis='y')
+
+        for bar, val in zip(bars, pnl_valeurs):
+            if val != 0:
+                couleur = '#00ff88' if val >= 0 else '#ff4444'
+                ax2.text(bar.get_x() + bar.get_width()/2,
+                         bar.get_height() + (0.2 if val >= 0 else -1.2),
+                         f'{"+"+str(val)+"€" if val >= 0 else str(val)+"€"}',
+                         ha='center', fontsize=8,
+                         color=couleur, fontweight='bold')
+
+        plt.tight_layout(pad=2.0)
+
+        # Sauvegarder en mémoire et envoyer via Telegram
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150,
+                    bbox_inches='tight', facecolor='#1a1a2e')
+        buf.seek(0)
+        plt.close()
+
+        # Envoyer l'image via Telegram sendPhoto
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            url_photo = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+            form_data = aiohttp.FormData()
+            form_data.add_field('chat_id', TELEGRAM_CHAT_ID)
+            form_data.add_field('caption', f'Progression semaine du {date_debut} au {date_fin}')
+            form_data.add_field('photo', buf, filename='progression.png',
+                                content_type='image/png')
+            await session.post(url_photo, data=form_data,
+                               timeout=aiohttp.ClientTimeout(total=30))
+            log.info(f"  Graphique hebdomadaire envoyé sur Telegram")
+
+    except Exception as e:
+        log.error(f"Erreur graphique hebdomadaire : {e}")
+
+    # ── Rapport texte — classement marchés
     if not gains_par_marche:
         return
 
-    # Trier du plus rentable au moins rentable
-    classement = sorted(gains_par_marche.items(), key=lambda x: x[1], reverse=True)
+    classement    = sorted(gains_par_marche.items(), key=lambda x: x[1], reverse=True)
     total_semaine = round(sum(gains_par_marche.values()), 2)
-
-    # Construire le message
-    date_debut = (maintenant - timedelta(days=7)).strftime('%d/%m')
-    date_fin   = maintenant.strftime('%d/%m/%Y')
 
     lignes = []
     for marche, gain in classement:
@@ -602,7 +718,7 @@ async def envoyer_rapport_hebdomadaire(session, etat):
         lignes.append(f"{emoji} {marche:<12} {signe}{gain}€")
 
     message = (
-        f"📊 <b>RAPPORT HEBDOMADAIRE VÉRONIQUE973</b>\n"
+        f"<b>RAPPORT HEBDOMADAIRE VERONIQUE973</b>\n"
         f"Semaine du {date_debut} au {date_fin}\n"
         f"{'─'*30}\n"
         f"{chr(10).join(lignes)}\n"
@@ -610,7 +726,7 @@ async def envoyer_rapport_hebdomadaire(session, etat):
         f"<b>Total semaine : {'+' if total_semaine>=0 else ''}{total_semaine}€</b>"
     )
 
-    log.info(f"  📊 Envoi rapport hebdomadaire Telegram")
+    log.info(f"  Envoi rapport hebdomadaire texte Telegram")
     await telegram(session, message)
 
 # ═══════════════════════════════════════════════════════════════
