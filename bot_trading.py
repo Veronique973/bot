@@ -704,26 +704,64 @@ async def envoyer_rapport_hebdomadaire(session, etat):
     except Exception as e:
         log.error(f"Erreur graphique hebdomadaire : {e}")
 
-    # ── Rapport texte — classement marchés
+    # ── Rapport texte — semaine + total depuis début
     if not gains_par_marche:
         return
 
+    # Calcul total depuis le début pour chaque marché
+    gains_total     = {}
+    wins_total      = {}
+    pertes_total    = {}
+    wins_semaine    = {}
+    pertes_semaine  = {}
+
+    for h in etat.get("historique", []):
+        marche    = h.get("marche", "?")
+        gain      = h.get("gain", 0)
+        resultat  = h.get("resultat", "")
+        semaine   = h.get("heure", "") >= il_y_a_7_jours
+
+        # Total depuis début
+        gains_total[marche]  = round(gains_total.get(marche, 0) + gain, 2)
+        if resultat == "GAGNE":
+            wins_total[marche]   = wins_total.get(marche, 0) + 1
+        else:
+            pertes_total[marche] = pertes_total.get(marche, 0) + 1
+
+        # Semaine uniquement
+        if semaine:
+            if resultat == "GAGNE":
+                wins_semaine[marche]   = wins_semaine.get(marche, 0) + 1
+            else:
+                pertes_semaine[marche] = pertes_semaine.get(marche, 0) + 1
+
+    # Trier par gain semaine décroissant
     classement    = sorted(gains_par_marche.items(), key=lambda x: x[1], reverse=True)
     total_semaine = round(sum(gains_par_marche.values()), 2)
+    total_global  = round(sum(gains_total.values()), 2)
 
     lignes = []
-    for marche, gain in classement:
-        signe = "+" if gain >= 0 else ""
-        emoji = "✅" if gain >= 0 else "❌"
-        lignes.append(f"{emoji} {marche:<12} {signe}{gain}€")
+    for marche, gain_sem in classement:
+        emoji   = "✅" if gain_sem >= 0 else "❌"
+        s_gain  = f"{'+' if gain_sem>=0 else ''}{gain_sem}€"
+        s_wl    = f"{wins_semaine.get(marche,0)}G/{pertes_semaine.get(marche,0)}P"
+        t_gain  = gains_total.get(marche, 0)
+        t_s     = f"{'+' if t_gain>=0 else ''}{t_gain}€"
+        t_wl    = f"{wins_total.get(marche,0)}G/{pertes_total.get(marche,0)}P"
+        lignes.append(
+            f"{emoji} <code>{marche:<10} {s_gain:<10} {s_wl:<8} | {t_s:<10} {t_wl}</code>"
+        )
 
     message = (
         f"<b>RAPPORT HEBDOMADAIRE VERONIQUE973</b>\n"
         f"Semaine du {date_debut} au {date_fin}\n"
-        f"{'─'*30}\n"
+        f"<code>{'─'*44}</code>\n"
+        f"<code>{'MARCHÉ':<10} {'SEMAINE':>8} {'G/P':>6}  | {'TOTAL':>8} {'G/P'}</code>\n"
+        f"<code>{'─'*44}</code>\n"
         f"{chr(10).join(lignes)}\n"
-        f"{'─'*30}\n"
-        f"<b>Total semaine : {'+' if total_semaine>=0 else ''}{total_semaine}€</b>"
+        f"<code>{'─'*44}</code>\n"
+        f"<b>Semaine : {'+' if total_semaine>=0 else ''}{total_semaine}€ | "
+        f"Total : {'+' if total_global>=0 else ''}{total_global}€</b>"
     )
 
     log.info(f"  Envoi rapport hebdomadaire texte Telegram")
