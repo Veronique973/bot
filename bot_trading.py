@@ -561,6 +561,58 @@ def reset_pnl_jour_si_nouveau_jour(etat):
         etat["date_jour"] = aujourd_hui
         log.info("  📅 Nouveau jour — PnL remis à 0")
 
+async def envoyer_rapport_hebdomadaire(session, etat):
+    """
+    Envoie chaque lundi matin le classement des marchés
+    par gain total de la semaine écoulée.
+    """
+    historique = etat.get("historique", [])
+    if not historique:
+        return
+
+    # Calculer le gain par marché sur les 7 derniers jours
+    from datetime import timedelta
+    maintenant    = datetime.now()
+    il_y_a_7_jours = (maintenant - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    gains_par_marche = {}
+    for h in historique:
+        if h.get("heure", "") >= il_y_a_7_jours:
+            marche = h.get("marche", "?")
+            gain   = h.get("gain", 0)
+            gains_par_marche[marche] = round(
+                gains_par_marche.get(marche, 0) + gain, 2
+            )
+
+    if not gains_par_marche:
+        return
+
+    # Trier du plus rentable au moins rentable
+    classement = sorted(gains_par_marche.items(), key=lambda x: x[1], reverse=True)
+    total_semaine = round(sum(gains_par_marche.values()), 2)
+
+    # Construire le message
+    date_debut = (maintenant - timedelta(days=7)).strftime('%d/%m')
+    date_fin   = maintenant.strftime('%d/%m/%Y')
+
+    lignes = []
+    for marche, gain in classement:
+        signe = "+" if gain >= 0 else ""
+        emoji = "✅" if gain >= 0 else "❌"
+        lignes.append(f"{emoji} {marche:<12} {signe}{gain}€")
+
+    message = (
+        f"📊 <b>RAPPORT HEBDOMADAIRE VÉRONIQUE973</b>\n"
+        f"Semaine du {date_debut} au {date_fin}\n"
+        f"{'─'*30}\n"
+        f"{chr(10).join(lignes)}\n"
+        f"{'─'*30}\n"
+        f"<b>Total semaine : {'+' if total_semaine>=0 else ''}{total_semaine}€</b>"
+    )
+
+    log.info(f"  📊 Envoi rapport hebdomadaire Telegram")
+    await telegram(session, message)
+
 # ═══════════════════════════════════════════════════════════════
 #  TABLEAU DE BORD
 # ═══════════════════════════════════════════════════════════════
@@ -622,6 +674,16 @@ async def boucle_principale():
         while True:
             try:
                 reset_pnl_jour_si_nouveau_jour(etat)
+
+                # ── Rapport hebdomadaire chaque lundi à 8h UTC
+                maintenant = datetime.utcnow()
+                if (maintenant.weekday() == 0 and  # lundi
+                    maintenant.hour == 8 and
+                    maintenant.minute < 1 and
+                    etat.get("derniere_semaine", "") != maintenant.strftime('%Y-%W')):
+                    await envoyer_rapport_hebdomadaire(session, etat)
+                    etat["derniere_semaine"] = maintenant.strftime('%Y-%W')
+                    sauvegarder_etat(etat)
 
                 statut = verifier_protections(etat, etat["capital"])
                 if statut == "RUINE":
