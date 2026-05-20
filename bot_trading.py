@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 import pandas as pd
 from ta.volatility import AverageTrueRange
+from ta.momentum import RSIIndicator
 from database import init_database, charger_etat, sauvegarder_etat, enregistrer_trade
 
 logging.basicConfig(
@@ -41,6 +42,15 @@ MAX_TRADES_SIMULTANES   = 20
 SEUIL_MOUVEMENT_PCT     = 0.50   # dès que le prix bouge de 0.50% → signal
 VOLUME_MINI             = 0.25   # volume min vs moyenne 24h
 STOP_LOSS_PCT           = 2.0    # perte maximum = 2% du capital (comme les paliers)
+STOP_LOSS_MISE_MAX_PCT  = 0.50   # stop plafonné à 50% de la mise
+
+# ── Filtre RSI 1h
+RSI_SEUIL_BAS           = 45     # RSI < 45 → marché baissier → inverser ACHAT en VENTE
+RSI_SEUIL_HAUT          = 55     # RSI > 55 → marché haussier → inverser VENTE en ACHAT
+RSI_PERIODE             = 14     # période RSI standard
+
+# ── Cooldown après perte uniquement
+COOLDOWN_APRES_PERTE    = 43200  # 12h après stop loss ou timeout négatif
 
 # ── Lock profits par paliers proportionnels au capital
 # Les paliers s'adaptent automatiquement selon le capital actuel
@@ -112,16 +122,16 @@ prix_reference    = {}    # { symbole: prix_au_moment_du_scan }
 cooldown_marches  = {}    # { symbole: timestamp_fin_cooldown }
 trades_lock       = None  # initialisé dans boucle_principale()
 
-COOLDOWN_APRES_TRADE = 300  # 5 minutes de pause par marché après fermeture d'un trade
-
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
 log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
+log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
+log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX_PCT*100)}% mise")
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
-log.info(f"  Cooldown marché : {COOLDOWN_APRES_TRADE//60} min après chaque trade")
+log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
@@ -218,6 +228,14 @@ def calc_volume_ratio(df):
     except:
         return 0.0
 
+def calc_rsi_1h(df, periode=14):
+    """Calcule le RSI sur les bougies 1h."""
+    try:
+        val = RSIIndicator(close=df['close'], window=periode).rsi().iloc[-1]
+        return round(float(val), 2) if not pd.isna(val) else 50.0
+    except:
+        return 50.0
+
 # ═══════════════════════════════════════════════════════════════
 #  DÉTECTION SIGNAL — SURVEILLANCE TEMPS RÉEL
 #  1. Prix de référence enregistré au démarrage
@@ -242,11 +260,15 @@ async def analyser_marche(session, symbole):
     variation_pct = (prix_actuel - prix_ref) / prix_ref * 100
 
     df_15m    = await get_klines(session, symbole, interval=15, limite=50)
+    df_1h     = await get_klines(session, symbole, interval=60, limite=50)
     vol_ratio = 0.0
     atr_val   = 0.0
+    rsi_1h    = 50.0
     if df_15m is not None and len(df_15m) >= 15:
         vol_ratio = calc_volume_ratio(df_15m)
         atr_val   = calc_atr(df_15m)
+    if df_1h is not None and len(df_1h) >= 20:
+        rsi_1h = calc_rsi_1h(df_1h, RSI_PERIODE)
 
     if vol_ratio < VOLUME_MINI:
         log.info(f"  {symbole} : Vol {vol_ratio:.2f}x | Variation={variation_pct:+.2f}% → skip")
@@ -255,22 +277,35 @@ async def analyser_marche(session, symbole):
     details = {
         "atr":           atr_val,
         "vol_ratio":     vol_ratio,
+        "rsi_1h":        rsi_1h,
         "variation_pct": abs(variation_pct),
         "prix_ref":      prix_ref,
         "prix_actuel":   prix_actuel,
     }
 
     if variation_pct <= -SEUIL_MOUVEMENT_PCT:
-        log.info(f"  {symbole} ✅ ACHAT | Chute={variation_pct:.2f}% | Vol={vol_ratio:.2f}x")
-        prix_reference[symbole] = prix_actuel
-        return "ACHAT", details
+        if rsi_1h < RSI_SEUIL_BAS:
+            # Marché baissier → inverser ACHAT en VENTE
+            log.info(f"  {symbole} 🔄 ACHAT→VENTE | RSI={rsi_1h} < {RSI_SEUIL_BAS} | Vol={vol_ratio:.2f}x")
+            prix_reference[symbole] = prix_actuel
+            return "VENTE", details
+        else:
+            log.info(f"  {symbole} ✅ ACHAT | Chute={variation_pct:.2f}% | RSI={rsi_1h} | Vol={vol_ratio:.2f}x")
+            prix_reference[symbole] = prix_actuel
+            return "ACHAT", details
 
     if variation_pct >= SEUIL_MOUVEMENT_PCT:
-        log.info(f"  {symbole} ✅ VENTE | Montée={variation_pct:.2f}% | Vol={vol_ratio:.2f}x")
-        prix_reference[symbole] = prix_actuel
-        return "VENTE", details
+        if rsi_1h > RSI_SEUIL_HAUT:
+            # Marché haussier → inverser VENTE en ACHAT
+            log.info(f"  {symbole} 🔄 VENTE→ACHAT | RSI={rsi_1h} > {RSI_SEUIL_HAUT} | Vol={vol_ratio:.2f}x")
+            prix_reference[symbole] = prix_actuel
+            return "ACHAT", details
+        else:
+            log.info(f"  {symbole} ✅ VENTE | Montée={variation_pct:.2f}% | RSI={rsi_1h} | Vol={vol_ratio:.2f}x")
+            prix_reference[symbole] = prix_actuel
+            return "VENTE", details
 
-    log.info(f"  {symbole} : Variation={variation_pct:+.2f}% (seuil ±{SEUIL_MOUVEMENT_PCT}%)")
+    log.info(f"  {symbole} : Variation={variation_pct:+.2f}% | RSI={rsi_1h} (seuil ±{SEUIL_MOUVEMENT_PCT}%)")
     return "NEUTRE", {}
 
 # ═══════════════════════════════════════════════════════════════
@@ -318,10 +353,16 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     mise = calculer_mise(capital, etat)
 
     # Stop loss proportionnel au capital — 2% du capital
-    # Cohérent avec les paliers qui sont aussi en % du capital
+    # Plafonné à 50% de la mise pour éviter un stop trop large
     stop_loss_eur = round(capital * STOP_LOSS_PCT / 100, 2)
+    stop_loss_max_mise = round(mise * STOP_LOSS_MISE_MAX_PCT, 2)
+    if stop_loss_eur > stop_loss_max_mise:
+        stop_loss_eur = stop_loss_max_mise
+        log.info(f"  ⚠️ Stop plafonné à 50% mise : -{stop_loss_eur}€")
 
-    # Stop loss initial — protection max proportionnelle
+    rsi_1h = details.get("rsi_1h", 50.0)
+
+    # Stop loss initial
     if direction == "ACHAT":
         stop_initial   = round(prix_entree * (1 - stop_loss_eur / (mise * LEVIER)), 8)
         objectif_final = round(prix_entree * (1 + stop_loss_eur / (mise * LEVIER) * 2), 8)
@@ -339,7 +380,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     log.info(f"  {symbole} ({direction})")
     log.info(f"  Variation : {details.get('variation_pct', 0):.2f}% | "
              f"Ref={details.get('prix_ref')} → {details.get('prix_actuel')}")
-    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | Stop max : -{stop_loss_eur}€ ({STOP_LOSS_PCT}% capital)")
+    log.info(f"  Vol={details.get('vol_ratio', 0):.2f}x | RSI 1h={rsi_1h} | Stop : -{stop_loss_eur}€")
     log.info(f"  Prix entrée : {prix_entree} | Stop : {stop_initial}")
     log.info(f"  Mise : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€")
     log.info(f"  Trades ouverts : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n")
@@ -348,9 +389,9 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         f"📊 <b>TRADE #{numero_trade} — VÉRONIQUE973 V4</b>\n"
         f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
         f"Variation : {details.get('variation_pct', 0):.2f}% depuis ref\n"
-        f"Volume : {details.get('vol_ratio', 0):.2f}x\n"
+        f"Volume : {details.get('vol_ratio', 0):.2f}x | RSI 1h : {rsi_1h}\n"
         f"Prix : {prix_entree} | Stop : {stop_initial}\n"
-        f"Mise : {mise}€ × x{LEVIER}\n"
+        f"Mise : {mise}€ × x{LEVIER} | Stop max : -{stop_loss_eur}€\n"
         f"Trades : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n"
         f"🎯 Lock paliers : {LOCK_PALIERS_PCT[:4]}%..."
     )
@@ -450,12 +491,16 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             gain_final = pnl
             break
 
-    # Libérer le marché + activer cooldown 5 minutes
+    # Libérer le marché
+    # Cooldown 12h uniquement si trade perdu ou timeout négatif
     async with trades_lock:
         trades_ouverts.pop(symbole, None)
-        cooldown_marches[symbole] = time.time() + COOLDOWN_APRES_TRADE
-        log.info(f"  ❄️ Cooldown {COOLDOWN_APRES_TRADE//60}min [{symbole}] — "
-                 f"prochain signal dans 5 min")
+        if resultat_final == "PERDU" or (resultat_final != "GAGNE" and gain_final < 0):
+            cooldown_marches[symbole] = time.time() + COOLDOWN_APRES_PERTE
+            log.info(f"  ❄️ Cooldown 12h [{symbole}] — marché en pause jusqu'à demain")
+        else:
+            cooldown_marches.pop(symbole, None)
+            log.info(f"  ✅ [{symbole}] libéré immédiatement — trade gagnant")
 
     # Mettre à jour l'état global sous lock
     async with trades_lock:
@@ -509,7 +554,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         'score':         None,
         'adx':           None,
         'atr':           None,
-        'rsi':           None,
+        'rsi':           rsi_1h,
     })
     sauvegarder_etat(etat_global)
     afficher_tableau_de_bord(etat_global)
