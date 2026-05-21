@@ -86,7 +86,8 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # ── Horaires de trading (heure Guyane = UTC-3)
 # Groupe 24H   : toujours actif — 8 marchés
 # Groupe NUIT  : 00h-09h Guyane = 03h-12h UTC — 14 marchés
-# Groupe JOUR  : 09h-20h Guyane = 12h-23h UTC — 1 marché (TAO)
+# Groupe JOUR  : 09h-17h Guyane = 12h-20h UTC — 1 marché (TAO)
+# Pause totale : 17h-00h Guyane = 20h-03h UTC
 
 # Groupe 1 — 24h/24
 MARCHES_24H = [
@@ -103,7 +104,7 @@ MARCHES_NUIT = [
     "POLUSDT",  "APEUSDT",
 ]
 
-# Groupe 3 — Session JOUR (12h-23h UTC = 09h-20h Guyane)
+# Groupe 3 — Session JOUR (12h-20h UTC = 09h-17h Guyane)
 MARCHES_JOUR = [
     "TAOUSDT",
 ]
@@ -138,17 +139,27 @@ KRAKEN_SYMBOLS = {
 }
 
 def get_marches_actifs():
-    """Retourne les marchés actifs selon l'heure UTC actuelle."""
+    """Retourne les marchés actifs selon l'heure UTC actuelle.
+    
+    Heure Guyane = UTC-3
+    - 00h-09h Guyane (03h-12h UTC) → 8 marchés 24H + 14 marchés NUIT + TAO = 23 marchés
+    - 09h-17h Guyane (12h-20h UTC) → 8 marchés 24H + TAO = 9 marchés
+    - 17h-00h Guyane (20h-03h UTC) → PAUSE totale — aucun nouveau trade
+    """
     heure_utc = datetime.utcnow().hour
-    # 03h-12h UTC = 00h-09h Guyane → 24H + NUIT
-    # 12h-23h UTC = 09h-20h Guyane → 24H + JOUR
-    # 23h-03h UTC = 20h-00h Guyane → uniquement 24H
+
+    # PAUSE totale : 20h-03h UTC = 17h-00h Guyane
+    if heure_utc >= 20 or heure_utc < 3:
+        return []
+
+    # Session NUIT : 03h-12h UTC = 00h-09h Guyane
+    # 24H + NUIT + TAO actifs
     if 3 <= heure_utc < 12:
-        return MARCHES_24H + MARCHES_NUIT
-    elif 12 <= heure_utc < 23:
-        return MARCHES_24H + MARCHES_JOUR
-    else:
-        return MARCHES_24H
+        return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
+
+    # Session JOUR : 12h-20h UTC = 09h-17h Guyane
+    # Uniquement 24H + TAO
+    return MARCHES_24H + MARCHES_JOUR
 
 # Pour compatibilité avec le reste du code
 MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
@@ -172,7 +183,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-09h Guyane=24H+NUIT | 09h-20h=24H+JOUR | 20h-00h=24H seul")
+log.info(f"  Horaires : 00h-09h=24H+NUIT+TAO | 09h-17h=24H+TAO | 17h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
