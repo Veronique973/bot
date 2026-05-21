@@ -84,31 +84,28 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Groupe JOUR  : 08h-22h UTC = 05h-19h Guyane — Londres + New York
-# Groupe NUIT  : 00h-09h UTC = 21h-06h Guyane — Session Asiatique
-# Groupe 24H   : toujours actif (vrais H24)
-# Période creuse : 22h-00h UTC = 19h-21h Guyane → uniquement 24H
+# Groupe 24H   : toujours actif — 8 marchés
+# Groupe NUIT  : 00h-09h Guyane = 03h-12h UTC — 14 marchés
+# Groupe JOUR  : 09h-20h Guyane = 12h-23h UTC — 1 marché (TAO)
 
-# Groupe 1 — 24h/24 (vraiment actifs H24)
+# Groupe 1 — 24h/24
 MARCHES_24H = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
+    "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
+    "SUIUSDT",  "XMRUSDT",
 ]
 
-# Groupe 2 — Session JOUR (08h-22h UTC = 05h-19h Guyane)
-MARCHES_JOUR = [
+# Groupe 2 — Session NUIT (03h-12h UTC = 00h-09h Guyane)
+MARCHES_NUIT = [
     "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
     "LINKUSDT", "AVAXUSDT", "DOTUSDT",  "DOGEUSDT",
     "LTCUSDT",  "ALGOUSDT", "FILUSDT",  "AAVEUSDT",
-    "POLUSDT",  "APEUSDT",  "UNIUSDT",  "ARBUSDT",
-    "FTMUSDT",
+    "POLUSDT",  "APEUSDT",
 ]
 
-# Groupe 3 — Session NUIT/Asiatique (00h-09h UTC = 21h-06h Guyane)
-MARCHES_NUIT = [
-    "INJUSDT",  "OPUSDT",   "TIAUSDT",  "SNXUSDT",
-    "VETUSDT",  "SANDUSDT", "MANAUSDT", "ICPUSDT",
-    "MINAUSDT", "STXUSDT",  "GMTUSDT",  "RUNEUSDT",
-    "GALAUSDT", "HBARUSDT",
+# Groupe 3 — Session JOUR (12h-23h UTC = 09h-20h Guyane)
+MARCHES_JOUR = [
+    "TAOUSDT",
 ]
 
 KRAKEN_SYMBOLS = {
@@ -116,7 +113,12 @@ KRAKEN_SYMBOLS = {
     "ATOMUSDT":  "ATOMUSD",
     "NEARUSDT":  "NEARUSD",
     "TRXUSDT":   "TRXUSD",
-    # Groupe JOUR
+    "UNIUSDT":   "UNIUSD",
+    "ARBUSDT":   "ARBUSD",
+    "FTMUSDT":   "FTMUSD",
+    "SUIUSDT":   "SUIUSD",
+    "XMRUSDT":   "XMRUSD",
+    # Groupe NUIT
     "ETHUSDT":   "XETHZUSD",
     "XRPUSDT":   "XXRPZUSD",
     "SOLUSDT":   "SOLUSD",
@@ -131,41 +133,25 @@ KRAKEN_SYMBOLS = {
     "AAVEUSDT":  "AAVEUSD",
     "POLUSDT":   "POLUSD",
     "APEUSDT":   "APEUSD",
-    "UNIUSDT":   "UNIUSD",
-    "ARBUSDT":   "ARBUSD",
-    "FTMUSDT":   "FTMUSD",
-    # Groupe NUIT
-    "INJUSDT":   "INJUSD",
-    "OPUSDT":    "OPUSD",
-    "TIAUSDT":   "TIAUSD",
-    "SNXUSDT":   "SNXUSD",
-    "VETUSDT":   "VETUSD",
-    "SANDUSDT":  "SANDUSD",
-    "MANAUSDT":  "MANAUSD",
-    "ICPUSDT":   "ICPUSD",
-    "MINAUSDT":  "MINAUSD",
-    "STXUSDT":   "STXUSD",
-    "GMTUSDT":   "GMTUSD",
-    "RUNEUSDT":  "RUNEUSD",
-    "GALAUSDT":  "GALAUSD",
-    "HBARUSDT":  "HBARUSD",
+    # Groupe JOUR
+    "TAOUSDT":   "TAOUSD",
 }
 
 def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle."""
     heure_utc = datetime.utcnow().hour
-    if 0 <= heure_utc < 9:
-        # Session asiatique — 21h-06h Guyane
+    # 03h-12h UTC = 00h-09h Guyane → 24H + NUIT
+    # 12h-23h UTC = 09h-20h Guyane → 24H + JOUR
+    # 23h-03h UTC = 20h-00h Guyane → uniquement 24H
+    if 3 <= heure_utc < 12:
         return MARCHES_24H + MARCHES_NUIT
-    elif 8 <= heure_utc < 22:
-        # Session Londres + New York — 05h-19h Guyane
+    elif 12 <= heure_utc < 23:
         return MARCHES_24H + MARCHES_JOUR
     else:
-        # Période creuse 22h-00h UTC — uniquement 24H
         return MARCHES_24H
 
 # Pour compatibilité avec le reste du code
-MARCHES = MARCHES_24H + MARCHES_JOUR + MARCHES_NUIT
+MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -178,7 +164,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés 24H : {len(MARCHES_24H)} | Jour : {len(MARCHES_JOUR)} | Nuit : {len(MARCHES_NUIT)}")
+log.info(f"  Marchés 24H : {len(MARCHES_24H)} | Nuit : {len(MARCHES_NUIT)} | Jour : {len(MARCHES_JOUR)}")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -186,7 +172,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : Jour 05h-19h Guyane | Nuit 21h-06h Guyane | Creuse 19h-21h")
+log.info(f"  Horaires : 00h-09h Guyane=24H+NUIT | 09h-20h=24H+JOUR | 20h-00h=24H seul")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
