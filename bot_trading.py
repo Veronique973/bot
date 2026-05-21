@@ -75,7 +75,7 @@ KELLY_FRACTION          = 0.25
 KELLY_CAP               = 0.20
 
 # ── Protections
-KILL_SWITCH_JOUR        = -25.0
+KILL_SWITCH_JOUR        = -10.0
 SEUIL_RUINE             = 300.0
 MAX_PERTES_CONSECUTIVES = 2
 COOLDOWN_PERTES         = 1800   # 30 min
@@ -83,36 +83,87 @@ COOLDOWN_PERTES         = 1800   # 30 min
 TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
-MARCHES = [
+# ── Horaires de trading (heure Guyane = UTC-3)
+# Groupe JOUR  : 09h-00h Guyane = 12h-03h UTC
+# Groupe NUIT  : 00h-09h Guyane = 03h-12h UTC
+# Groupe 24H   : toujours actif
+
+# Groupe 1 — 24h/24
+MARCHES_24H = [
+    "ATOMUSDT", "NEARUSDT", "TRXUSDT",
+    "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
+]
+
+# Groupe 2 — Session JOUR (9h-00h Guyane = 12h-03h UTC)
+MARCHES_JOUR = [
     "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
-    "LINKUSDT", "ATOMUSDT", "AVAXUSDT", "NEARUSDT",
-    "DOTUSDT",  "DOGEUSDT", "LTCUSDT",  "ALGOUSDT",
-    "TRXUSDT",  "UNIUSDT",  "FILUSDT",  "AAVEUSDT",
-    "POLUSDT",  "APEUSDT",  "ARBUSDT",  "FTMUSDT"
+    "LINKUSDT", "AVAXUSDT", "DOTUSDT",  "DOGEUSDT",
+    "LTCUSDT",  "ALGOUSDT", "FILUSDT",  "AAVEUSDT",
+    "POLUSDT",  "APEUSDT",
+]
+
+# Groupe 3 — Session NUIT/Asiatique (00h-09h Guyane = 03h-12h UTC)
+MARCHES_NUIT = [
+    "INJUSDT",  "OPUSDT",   "TIAUSDT",  "SNXUSDT",
+    "VETUSDT",  "XLMUSDT",  "XTZUSDT",  "ZECUSDT",
+    "FLOWUSDT", "KSMUSDT",  "EOSUSDT",  "SANDUSDT",
+    "MANAUSDT", "DASHUSDT",
 ]
 
 KRAKEN_SYMBOLS = {
-    "ETHUSDT":   "XETHZUSD",
-    "XRPUSDT":   "XXRPZUSD",
-    "SOLUSDT":   "SOLUSD",
-    "ADAUSDT":   "ADAUSD",
-    "LINKUSDT":  "LINKUSD",
-    "ATOMUSDT":  "ATOMUSD",
-    "AVAXUSDT":  "AVAXUSD",
-    "NEARUSDT":  "NEARUSD",
-    "DOTUSDT":   "DOTUSD",
-    "DOGEUSDT":  "XDGUSD",
-    "LTCUSDT":   "XLTCZUSD",
-    "ALGOUSDT":  "ALGOUSD",
-    "TRXUSDT":   "TRXUSD",
-    "UNIUSDT":   "UNIUSD",
-    "FILUSDT":   "FILUSD",
-    "AAVEUSDT":  "AAVEUSD",
-    "POLUSDT":   "POLUSD",    # MATIC rebrandé POL sur Kraken
-    "APEUSDT":   "APEUSD",
-    "ARBUSDT":   "ARBUSD",    # Arbitrum — très liquide
-    "FTMUSDT":   "FTMUSD",    # Fantom — bonne liquidité
+    # Groupe 24H
+    "ATOMUSDT": "ATOMUSD",
+    "NEARUSDT": "NEARUSD",
+    "TRXUSDT":  "TRXUSD",
+    "UNIUSDT":  "UNIUSD",
+    "ARBUSDT":  "ARBUSD",
+    "FTMUSDT":  "FTMUSD",
+    # Groupe JOUR
+    "ETHUSDT":  "XETHZUSD",
+    "XRPUSDT":  "XXRPZUSD",
+    "SOLUSDT":  "SOLUSD",
+    "ADAUSDT":  "ADAUSD",
+    "LINKUSDT": "LINKUSD",
+    "AVAXUSDT": "AVAXUSD",
+    "DOTUSDT":  "DOTUSD",
+    "DOGEUSDT": "XDGUSD",
+    "LTCUSDT":  "XLTCZUSD",
+    "ALGOUSDT": "ALGOUSD",
+    "FILUSDT":  "FILUSD",
+    "AAVEUSDT": "AAVEUSD",
+    "POLUSDT":  "POLUSD",
+    "APEUSDT":  "APEUSD",
+    # Groupe NUIT
+    "INJUSDT":  "INJUSD",
+    "OPUSDT":   "OPUSD",
+    "TIAUSDT":  "TIAUSD",
+    "SNXUSDT":  "SNXUSD",
+    "VETUSDT":  "VETUSD",
+    "XLMUSDT":  "XLMUSD",
+    "XTZUSDT":  "XTZUSD",
+    "ZECUSDT":  "ZECUSD",
+    "FLOWUSDT": "FLOWUSD",
+    "KSMUSDT":  "KSMUSD",
+    "EOSUSDT":  "EOSUSD",
+    "SANDUSDT": "SANDUSD",
+    "MANAUSDT": "MANAUSD",
+    "DASHUSDT": "DASHUSD",
 }
+
+def get_marches_actifs():
+    """Retourne les marchés actifs selon l'heure UTC actuelle."""
+    heure_utc = datetime.utcnow().hour
+    # Session JOUR : 12h-03h UTC (9h-00h Guyane)
+    # Session NUIT : 03h-12h UTC (00h-09h Guyane)
+    if 3 <= heure_utc < 12:
+        # Session nuit/asiatique
+        return MARCHES_24H + MARCHES_NUIT
+    else:
+        # Session jour
+        return MARCHES_24H + MARCHES_JOUR
+
+# Pour compatibilité avec le reste du code
+MARCHES = MARCHES_24H + MARCHES_JOUR + MARCHES_NUIT
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -125,7 +176,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés : {len(MARCHES)} cryptos | Max {MAX_TRADES_SIMULTANES} trades")
+log.info(f"  Marchés 24H : {len(MARCHES_24H)} | Jour : {len(MARCHES_JOUR)} | Nuit : {len(MARCHES_NUIT)}")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -133,6 +184,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
+log.info(f"  Horaires : Jour 9h-00h Guyane | Nuit 00h-09h Guyane")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
@@ -903,8 +955,9 @@ async def boucle_principale():
 
                 async with trades_lock:
                     slots_libres        = MAX_TRADES_SIMULTANES - len(trades_ouverts)
+                    marches_actifs      = get_marches_actifs()
                     marches_disponibles = [
-                        m for m in MARCHES
+                        m for m in marches_actifs
                         if m not in trades_ouverts
                         and time.time() >= cooldown_marches.get(m, 0)
                     ]
