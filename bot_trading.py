@@ -84,83 +84,85 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Groupe JOUR  : 09h-00h Guyane = 12h-03h UTC
-# Groupe NUIT  : 00h-09h Guyane = 03h-12h UTC
-# Groupe 24H   : toujours actif
+# Groupe JOUR  : 08h-22h UTC = 05h-19h Guyane — Londres + New York
+# Groupe NUIT  : 00h-09h UTC = 21h-06h Guyane — Session Asiatique
+# Groupe 24H   : toujours actif (vrais H24)
+# Période creuse : 22h-00h UTC = 19h-21h Guyane → uniquement 24H
 
-# Groupe 1 — 24h/24
+# Groupe 1 — 24h/24 (vraiment actifs H24)
 MARCHES_24H = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
-    "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
 ]
 
-# Groupe 2 — Session JOUR (9h-00h Guyane = 12h-03h UTC)
+# Groupe 2 — Session JOUR (08h-22h UTC = 05h-19h Guyane)
 MARCHES_JOUR = [
     "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
     "LINKUSDT", "AVAXUSDT", "DOTUSDT",  "DOGEUSDT",
     "LTCUSDT",  "ALGOUSDT", "FILUSDT",  "AAVEUSDT",
-    "POLUSDT",  "APEUSDT",
+    "POLUSDT",  "APEUSDT",  "UNIUSDT",  "ARBUSDT",
+    "FTMUSDT",
 ]
 
-# Groupe 3 — Session NUIT/Asiatique (00h-09h Guyane = 03h-12h UTC)
+# Groupe 3 — Session NUIT/Asiatique (00h-09h UTC = 21h-06h Guyane)
 MARCHES_NUIT = [
     "INJUSDT",  "OPUSDT",   "TIAUSDT",  "SNXUSDT",
-    "VETUSDT",  "XLMUSDT",  "XTZUSDT",  "ZECUSDT",
-    "FLOWUSDT", "KSMUSDT",  "EOSUSDT",  "SANDUSDT",
-    "MANAUSDT", "DASHUSDT",
+    "VETUSDT",  "SANDUSDT", "MANAUSDT", "ICPUSDT",
+    "MINAUSDT", "STXUSDT",  "GMTUSDT",  "RUNEUSDT",
+    "GALAUSDT", "HBARUSDT",
 ]
 
 KRAKEN_SYMBOLS = {
     # Groupe 24H
-    "ATOMUSDT": "ATOMUSD",
-    "NEARUSDT": "NEARUSD",
-    "TRXUSDT":  "TRXUSD",
-    "UNIUSDT":  "UNIUSD",
-    "ARBUSDT":  "ARBUSD",
-    "FTMUSDT":  "FTMUSD",
+    "ATOMUSDT":  "ATOMUSD",
+    "NEARUSDT":  "NEARUSD",
+    "TRXUSDT":   "TRXUSD",
     # Groupe JOUR
-    "ETHUSDT":  "XETHZUSD",
-    "XRPUSDT":  "XXRPZUSD",
-    "SOLUSDT":  "SOLUSD",
-    "ADAUSDT":  "ADAUSD",
-    "LINKUSDT": "LINKUSD",
-    "AVAXUSDT": "AVAXUSD",
-    "DOTUSDT":  "DOTUSD",
-    "DOGEUSDT": "XDGUSD",
-    "LTCUSDT":  "XLTCZUSD",
-    "ALGOUSDT": "ALGOUSD",
-    "FILUSDT":  "FILUSD",
-    "AAVEUSDT": "AAVEUSD",
-    "POLUSDT":  "POLUSD",
-    "APEUSDT":  "APEUSD",
+    "ETHUSDT":   "XETHZUSD",
+    "XRPUSDT":   "XXRPZUSD",
+    "SOLUSDT":   "SOLUSD",
+    "ADAUSDT":   "ADAUSD",
+    "LINKUSDT":  "LINKUSD",
+    "AVAXUSDT":  "AVAXUSD",
+    "DOTUSDT":   "DOTUSD",
+    "DOGEUSDT":  "XDGUSD",
+    "LTCUSDT":   "XLTCZUSD",
+    "ALGOUSDT":  "ALGOUSD",
+    "FILUSDT":   "FILUSD",
+    "AAVEUSDT":  "AAVEUSD",
+    "POLUSDT":   "POLUSD",
+    "APEUSDT":   "APEUSD",
+    "UNIUSDT":   "UNIUSD",
+    "ARBUSDT":   "ARBUSD",
+    "FTMUSDT":   "FTMUSD",
     # Groupe NUIT
-    "INJUSDT":  "INJUSD",
-    "OPUSDT":   "OPUSD",
-    "TIAUSDT":  "TIAUSD",
-    "SNXUSDT":  "SNXUSD",
-    "VETUSDT":  "VETUSD",
-    "XLMUSDT":  "XLMUSD",
-    "XTZUSDT":  "XTZUSD",
-    "ZECUSDT":  "ZECUSD",
-    "FLOWUSDT": "FLOWUSD",
-    "KSMUSDT":  "KSMUSD",
-    "EOSUSDT":  "EOSUSD",
-    "SANDUSDT": "SANDUSD",
-    "MANAUSDT": "MANAUSD",
-    "DASHUSDT": "DASHUSD",
+    "INJUSDT":   "INJUSD",
+    "OPUSDT":    "OPUSD",
+    "TIAUSDT":   "TIAUSD",
+    "SNXUSDT":   "SNXUSD",
+    "VETUSDT":   "VETUSD",
+    "SANDUSDT":  "SANDUSD",
+    "MANAUSDT":  "MANAUSD",
+    "ICPUSDT":   "ICPUSD",
+    "MINAUSDT":  "MINAUSD",
+    "STXUSDT":   "STXUSD",
+    "GMTUSDT":   "GMTUSD",
+    "RUNEUSDT":  "RUNEUSD",
+    "GALAUSDT":  "GALAUSD",
+    "HBARUSDT":  "HBARUSD",
 }
 
 def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle."""
     heure_utc = datetime.utcnow().hour
-    # Session JOUR : 12h-03h UTC (9h-00h Guyane)
-    # Session NUIT : 03h-12h UTC (00h-09h Guyane)
-    if 3 <= heure_utc < 12:
-        # Session nuit/asiatique
+    if 0 <= heure_utc < 9:
+        # Session asiatique — 21h-06h Guyane
         return MARCHES_24H + MARCHES_NUIT
-    else:
-        # Session jour
+    elif 8 <= heure_utc < 22:
+        # Session Londres + New York — 05h-19h Guyane
         return MARCHES_24H + MARCHES_JOUR
+    else:
+        # Période creuse 22h-00h UTC — uniquement 24H
+        return MARCHES_24H
 
 # Pour compatibilité avec le reste du code
 MARCHES = MARCHES_24H + MARCHES_JOUR + MARCHES_NUIT
@@ -184,7 +186,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : Jour 9h-00h Guyane | Nuit 00h-09h Guyane")
+log.info(f"  Horaires : Jour 05h-19h Guyane | Nuit 21h-06h Guyane | Creuse 19h-21h")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
