@@ -84,8 +84,8 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Tous les marchés actifs de 00h à 19h Guyane (03h-22h UTC)
-# Pause totale : 19h-00h Guyane = 22h-03h UTC
+# Tous les marchés actifs de 00h à 16h Guyane (03h-19h UTC)
+# Pause totale : 16h-00h Guyane = 19h-03h UTC
 
 MARCHES_24H = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
@@ -134,12 +134,12 @@ def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle.
 
     Heure Guyane = UTC-3
-    - 00h-19h Guyane (03h-22h UTC) → tous les 23 marchés actifs
-    - 19h-00h Guyane (22h-03h UTC) → PAUSE totale
+    - 00h-16h Guyane (03h-19h UTC) → tous les 23 marchés actifs
+    - 16h-00h Guyane (19h-03h UTC) → PAUSE totale
     """
     heure_utc = datetime.utcnow().hour
-    # PAUSE : 22h-03h UTC = 19h-00h Guyane
-    if heure_utc >= 22 or heure_utc < 3:
+    # PAUSE : 19h-03h UTC = 16h-00h Guyane
+    if heure_utc >= 19 or heure_utc < 3:
         return []
     # Tous les marchés actifs
     return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
@@ -149,7 +149,7 @@ MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
 
 def get_session_marche(symbole):
     """Retourne la session horaire d'un marché en heure Guyane."""
-    return "00h-19h Guyane"
+    return "00h-16h Guyane"
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -162,7 +162,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | Tous de 00h-19h Guyane")
+log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | Tous de 00h-16h Guyane")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -170,7 +170,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-19h Guyane (03h-22h UTC) tous marchés | 19h-00h=PAUSE")
+log.info(f"  Horaires : 00h-16h Guyane (03h-19h UTC) tous marchés | 16h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
@@ -656,7 +656,7 @@ def reset_pnl_jour_si_nouveau_jour(etat):
 
 async def envoyer_rapport_quotidien(session, etat):
     """
-    Envoie chaque jour à 21h Guyane (00h UTC) :
+    Envoie chaque jour à 19h Guyane (22h UTC) :
     1. Graphique de la journée
     2. Classement des marchés du jour avec gains et G/P
     """
@@ -777,7 +777,7 @@ async def envoyer_rapport_quotidien(session, etat):
 
 async def envoyer_rapport_hebdomadaire(session, etat):
     """
-    Envoie chaque dimanche à 21h Guyane (00h UTC lundi) :
+    Envoie chaque dimanche à 19h Guyane (22h UTC) :
     1. Le graphique de progression du capital sur 7 jours
     2. Le classement des marchés semaine + total depuis début avec G/P
     """
@@ -1045,17 +1045,17 @@ async def boucle_principale():
 
                 maintenant_utc = datetime.utcnow()
 
-                # ── Rapport quotidien chaque jour à 00h UTC = 21h Guyane
-                if (maintenant_utc.hour == 0 and
+                # ── Rapport quotidien chaque jour à 19h Guyane = 22h UTC
+                if (maintenant_utc.hour == 22 and
                     maintenant_utc.minute < 1 and
                     etat.get("dernier_rapport_quotidien", "") != maintenant_utc.strftime('%Y-%m-%d')):
                     await envoyer_rapport_quotidien(session, etat)
                     etat["dernier_rapport_quotidien"] = maintenant_utc.strftime('%Y-%m-%d')
                     sauvegarder_etat(etat)
 
-                # ── Rapport hebdomadaire chaque dimanche à 21h Guyane = 00h UTC lundi
-                if (maintenant_utc.weekday() == 0 and  # lundi UTC = dimanche 21h Guyane
-                    maintenant_utc.hour == 0 and
+                # ── Rapport hebdomadaire chaque dimanche à 19h Guyane = 22h UTC
+                if (maintenant_utc.weekday() == 6 and  # dimanche UTC = dimanche 19h Guyane
+                    maintenant_utc.hour == 22 and
                     maintenant_utc.minute < 1 and
                     etat.get("derniere_semaine", "") != maintenant_utc.strftime('%Y-%W')):
                     await envoyer_rapport_hebdomadaire(session, etat)
