@@ -35,7 +35,7 @@ MISE_MIN                = 10.0
 MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
-TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
+TIMEOUT_TRADE           = 10 * 3600  # 10h max par trade
 MAX_TRADES_SIMULTANES   = 20
 
 # ── Détection signal mean reversion — surveillance temps réel
@@ -84,12 +84,12 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Groupe 24H   : toujours actif — 8 marchés
-# Groupe NUIT  : 00h-09h Guyane = 03h-12h UTC — 14 marchés
-# Groupe JOUR  : 09h-17h Guyane = 12h-20h UTC — 1 marché (TAO)
-# Pause totale : 17h-00h Guyane = 20h-03h UTC
+# Groupe 00h-17h : actif de minuit à 17h Guyane — 8 marchés
+# Groupe NUIT    : 00h-09h Guyane = 03h-12h UTC — 14 marchés
+# Groupe JOUR    : 09h-17h Guyane = 12h-20h UTC — 1 marché (TAO)
+# Pause totale   : 17h-00h Guyane = 20h-03h UTC
 
-# Groupe 1 — 24h/24
+# Groupe 1 — 00h-17h Guyane
 MARCHES_24H = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
     "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
@@ -110,7 +110,7 @@ MARCHES_JOUR = [
 ]
 
 KRAKEN_SYMBOLS = {
-    # Groupe 24H
+    # Groupe 00h-17h Guyane
     "ATOMUSDT":  "ATOMUSD",
     "NEARUSDT":  "NEARUSD",
     "TRXUSDT":   "TRXUSD",
@@ -142,8 +142,8 @@ def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle.
     
     Heure Guyane = UTC-3
-    - 00h-09h Guyane (03h-12h UTC) → 8 marchés 24H + 14 marchés NUIT + TAO = 23 marchés
-    - 09h-17h Guyane (12h-20h UTC) → 8 marchés 24H + TAO = 9 marchés
+    - 00h-09h Guyane (03h-12h UTC) → 8 marchés 00h-17h + 14 marchés NUIT + TAO = 23 marchés
+    - 09h-17h Guyane (12h-20h UTC) → 8 marchés 00h-17h + TAO = 9 marchés
     - 17h-00h Guyane (20h-03h UTC) → PAUSE totale — aucun nouveau trade
     """
     heure_utc = datetime.utcnow().hour
@@ -153,16 +153,25 @@ def get_marches_actifs():
         return []
 
     # Session NUIT : 03h-12h UTC = 00h-09h Guyane
-    # 24H + NUIT + TAO actifs
+    # 00h-17h + NUIT + TAO actifs
     if 3 <= heure_utc < 12:
         return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
 
     # Session JOUR : 12h-20h UTC = 09h-17h Guyane
-    # Uniquement 24H + TAO
+    # Uniquement 00h-17h + TAO
     return MARCHES_24H + MARCHES_JOUR
 
 # Pour compatibilité avec le reste du code
 MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
+
+def get_session_marche(symbole):
+    """Retourne la session horaire d'un marché en heure Guyane."""
+    if symbole in MARCHES_NUIT:
+        return "00h-09h Guyane"
+    elif symbole in MARCHES_JOUR:
+        return "09h-17h Guyane"
+    else:
+        return "00h-17h Guyane"
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -175,7 +184,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés 24H : {len(MARCHES_24H)} | Nuit : {len(MARCHES_NUIT)} | Jour : {len(MARCHES_JOUR)}")
+log.info(f"  Marchés 00h-17h : {len(MARCHES_24H)} | Nuit 00h-09h : {len(MARCHES_NUIT)} | Jour 09h-17h : {len(MARCHES_JOUR)}")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -183,7 +192,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-09h=24H+NUIT+TAO | 09h-17h=24H+TAO | 17h-00h=PAUSE")
+log.info(f"  Horaires : 00h-09h=00h-17h+NUIT+TAO | 09h-17h=00h-17h+TAO | 17h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
@@ -411,7 +420,8 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         stop_loss_eur = stop_loss_max_mise
         log.info(f"  ⚠️ Stop plafonné à 50% mise : -{stop_loss_eur}€")
 
-    rsi_1h = details.get("rsi_1h", 50.0)
+    rsi_1h        = details.get("rsi_1h", 50.0)
+    session_label = get_session_marche(symbole)
 
     # Stop loss initial
     if direction == "ACHAT":
@@ -439,6 +449,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
     await telegram(session,
         f"📊 <b>TRADE #{numero_trade} — VÉRONIQUE973 V4</b>\n"
         f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
+        f"⏰ {session_label}\n"
         f"Variation : {details.get('variation_pct', 0):.2f}% depuis ref\n"
         f"Volume : {details.get('vol_ratio', 0):.2f}x | RSI 1h : {rsi_1h}\n"
         f"Prix : {prix_entree} | Stop : {stop_initial}\n"
@@ -491,7 +502,8 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
                      f"(max={pnl_max_atteint:.2f}€) | {duree}min")
             await telegram(session,
                 f"🔒 <b>SORTIE LOCK</b>\n"
-                f"{symbole} {direction}\n"
+                f"{symbole} | {get_session_marche(symbole)}\n"
+                f"{direction}\n"
                 f"Gain : <b>+{lock_actuel}€</b>\n"
                 f"PnL max : +{pnl_max_atteint:.2f}€\n"
                 f"Durée : {duree} min"
@@ -664,11 +676,132 @@ def reset_pnl_jour_si_nouveau_jour(etat):
         etat["date_jour"] = aujourd_hui
         log.info("  📅 Nouveau jour — PnL remis à 0")
 
+async def envoyer_rapport_quotidien(session, etat):
+    """
+    Envoie chaque jour à 21h Guyane (00h UTC) :
+    1. Graphique de la journée
+    2. Classement des marchés du jour avec gains et G/P
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import io
+
+    historique  = etat.get("historique", [])
+    aujourd_hui = datetime.now().strftime('%Y-%m-%d')
+    date_affich = datetime.now().strftime('%d/%m/%Y')
+
+    # ── Gains par marché aujourd'hui
+    gains_jour    = {}
+    wins_jour     = {}
+    pertes_jour   = {}
+
+    for h in historique:
+        if h.get("heure", "")[:10] == aujourd_hui:
+            marche   = h.get("marche", "?")
+            gain     = h.get("gain", 0)
+            resultat = h.get("resultat", "")
+            gains_jour[marche] = round(gains_jour.get(marche, 0) + gain, 2)
+            if resultat == "GAGNE":
+                wins_jour[marche]   = wins_jour.get(marche, 0) + 1
+            else:
+                pertes_jour[marche] = pertes_jour.get(marche, 0) + 1
+
+    # ── Graphique capital intraday
+    try:
+        capitaux_jour = []
+        heures_jour   = []
+        for h in historique:
+            if h.get("heure", "")[:10] == aujourd_hui:
+                heures_jour.append(h.get("heure", "")[11:16])
+                capitaux_jour.append(h.get("capital", etat["capital"]))
+
+        if len(capitaux_jour) >= 2:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            fig.patch.set_facecolor('#1a1a2e')
+            ax.set_facecolor('#16213e')
+            ax.plot(range(len(capitaux_jour)), capitaux_jour,
+                    color='#e94560', linewidth=2.5,
+                    marker='o', markersize=5,
+                    markerfacecolor='white', markeredgecolor='#e94560')
+            ax.axhline(y=capitaux_jour[0], color='#ffffff',
+                       linewidth=1, linestyle='--', alpha=0.4)
+            ax.set_xticks(range(len(heures_jour)))
+            ax.set_xticklabels(heures_jour, color='#aaaaaa', fontsize=7, rotation=45)
+            ax.set_ylabel('Capital (€)', color='#aaaaaa', fontsize=9)
+            ax.tick_params(colors='#aaaaaa')
+            for spine in ax.spines.values():
+                spine.set_color('#333366')
+            ax.grid(True, alpha=0.1, color='#ffffff')
+            pnl_jour = round(etat.get("pnl_jour", 0), 2)
+            ax.set_title(
+                f'VERONIQUE973 V4 — Journee du {date_affich}\n'
+                f'PnL jour : {"+"+str(pnl_jour)+"€" if pnl_jour>=0 else str(pnl_jour)+"€"}'
+                f' | Capital : {etat["capital"]}€',
+                color='white', fontsize=11, fontweight='bold', pad=10)
+            plt.tight_layout(pad=1.5)
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150,
+                        bbox_inches='tight', facecolor='#1a1a2e')
+            buf.seek(0)
+            plt.close()
+
+            if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+                url_photo = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                form_data = aiohttp.FormData()
+                form_data.add_field('chat_id', TELEGRAM_CHAT_ID)
+                form_data.add_field('caption', f'Journee du {date_affich}')
+                form_data.add_field('photo', buf, filename='journee.png',
+                                    content_type='image/png')
+                await session.post(url_photo, data=form_data,
+                                   timeout=aiohttp.ClientTimeout(total=30))
+                log.info(f"  Graphique quotidien envoyé sur Telegram")
+
+    except Exception as e:
+        log.error(f"Erreur graphique quotidien : {e}")
+
+    # ── Rapport texte quotidien
+    if not gains_jour:
+        return
+
+    classement    = sorted(gains_jour.items(), key=lambda x: x[1], reverse=True)
+    total_jour    = round(sum(gains_jour.values()), 2)
+    nb_trades     = etat.get("nb_trades", 0)
+    nb_wins       = etat.get("nb_wins", 0)
+    win_rate      = (nb_wins / nb_trades * 100) if nb_trades > 0 else 0
+    perf          = (etat["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100
+
+    lignes = []
+    for marche, gain in classement:
+        emoji   = "✅" if gain >= 0 else "❌"
+        s_gain       = f"{'+' if gain>=0 else ''}{gain}€"
+        s_wl         = f"{wins_jour.get(marche,0)}G/{pertes_jour.get(marche,0)}P"
+        session_label = get_session_marche(marche)
+        lignes.append(f"{emoji} <code>{marche:<12} {s_gain:<10} {s_wl:<8} {session_label}</code>")
+
+    message = (
+        f"📊 <b>RAPPORT QUOTIDIEN VERONIQUE973</b>\n"
+        f"Journee du {date_affich}\n"
+        f"<code>{'─'*44}</code>\n"
+        f"<code>{'MARCHÉ':<12} {'GAINS':>8} {'G/P':<8} SESSION</code>\n"
+        f"<code>{'─'*44}</code>\n"
+        f"{chr(10).join(lignes)}\n"
+        f"<code>{'─'*44}</code>\n"
+        f"<b>Total jour : {'+' if total_jour>=0 else ''}{total_jour}€</b>\n"
+        f"Capital : {round(etat['capital'],2)}€ "
+        f"({'+' if perf>=0 else ''}{round(perf,2)}%)\n"
+        f"Trades : {nb_trades} | WR : {round(win_rate,1)}%"
+    )
+
+    log.info(f"  Envoi rapport quotidien Telegram")
+    await telegram(session, message)
+
 async def envoyer_rapport_hebdomadaire(session, etat):
     """
-    Envoie chaque lundi matin :
-    1. Le graphique de progression du capital (image PNG)
-    2. Le classement des marchés par gain (texte)
+    Envoie chaque dimanche à 21h Guyane (00h UTC lundi) :
+    1. Le graphique de progression du capital sur 7 jours
+    2. Le classement des marchés semaine + total depuis début avec G/P
     """
     import matplotlib
     matplotlib.use('Agg')
@@ -932,14 +1065,23 @@ async def boucle_principale():
             try:
                 reset_pnl_jour_si_nouveau_jour(etat)
 
-                # ── Rapport hebdomadaire chaque lundi à 8h UTC
-                maintenant = datetime.utcnow()
-                if (maintenant.weekday() == 0 and  # lundi
-                    maintenant.hour == 8 and
-                    maintenant.minute < 1 and
-                    etat.get("derniere_semaine", "") != maintenant.strftime('%Y-%W')):
+                maintenant_utc = datetime.utcnow()
+
+                # ── Rapport quotidien chaque jour à 00h UTC = 21h Guyane
+                if (maintenant_utc.hour == 0 and
+                    maintenant_utc.minute < 1 and
+                    etat.get("dernier_rapport_quotidien", "") != maintenant_utc.strftime('%Y-%m-%d')):
+                    await envoyer_rapport_quotidien(session, etat)
+                    etat["dernier_rapport_quotidien"] = maintenant_utc.strftime('%Y-%m-%d')
+                    sauvegarder_etat(etat)
+
+                # ── Rapport hebdomadaire chaque dimanche à 21h Guyane = 00h UTC lundi
+                if (maintenant_utc.weekday() == 0 and  # lundi UTC = dimanche 21h Guyane
+                    maintenant_utc.hour == 0 and
+                    maintenant_utc.minute < 1 and
+                    etat.get("derniere_semaine", "") != maintenant_utc.strftime('%Y-%W')):
                     await envoyer_rapport_hebdomadaire(session, etat)
-                    etat["derniere_semaine"] = maintenant.strftime('%Y-%W')
+                    etat["derniere_semaine"] = maintenant_utc.strftime('%Y-%W')
                     sauvegarder_etat(etat)
 
                 statut = verifier_protections(etat, etat["capital"])
