@@ -84,19 +84,15 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Groupe 00h-17h : actif de minuit à 17h Guyane — 8 marchés
-# Groupe NUIT    : 00h-09h Guyane = 03h-12h UTC — 14 marchés
-# Groupe JOUR    : 09h-17h Guyane = 12h-20h UTC — 1 marché (TAO)
-# Pause totale   : 17h-00h Guyane = 20h-03h UTC
+# Tous les marchés actifs de 00h à 19h Guyane (03h-22h UTC)
+# Pause totale : 19h-00h Guyane = 22h-03h UTC
 
-# Groupe 1 — 00h-17h Guyane
 MARCHES_24H = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
     "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
     "SUIUSDT",  "XMRUSDT",
 ]
 
-# Groupe 2 — Session NUIT (03h-12h UTC = 00h-09h Guyane)
 MARCHES_NUIT = [
     "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
     "LINKUSDT", "AVAXUSDT", "DOTUSDT",  "DOGEUSDT",
@@ -104,13 +100,11 @@ MARCHES_NUIT = [
     "POLUSDT",  "APEUSDT",
 ]
 
-# Groupe 3 — Session JOUR (12h-20h UTC = 09h-17h Guyane)
 MARCHES_JOUR = [
     "TAOUSDT",
 ]
 
 KRAKEN_SYMBOLS = {
-    # Groupe 00h-17h Guyane
     "ATOMUSDT":  "ATOMUSD",
     "NEARUSDT":  "NEARUSD",
     "TRXUSDT":   "TRXUSD",
@@ -119,7 +113,6 @@ KRAKEN_SYMBOLS = {
     "FTMUSDT":   "FTMUSD",
     "SUIUSDT":   "SUIUSD",
     "XMRUSDT":   "XMRUSD",
-    # Groupe NUIT
     "ETHUSDT":   "XETHZUSD",
     "XRPUSDT":   "XXRPZUSD",
     "SOLUSDT":   "SOLUSD",
@@ -134,44 +127,29 @@ KRAKEN_SYMBOLS = {
     "AAVEUSDT":  "AAVEUSD",
     "POLUSDT":   "POLUSD",
     "APEUSDT":   "APEUSD",
-    # Groupe JOUR
     "TAOUSDT":   "TAOUSD",
 }
 
 def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle.
-    
+
     Heure Guyane = UTC-3
-    - 00h-09h Guyane (03h-12h UTC) → 8 marchés 00h-17h + 14 marchés NUIT + TAO = 23 marchés
-    - 09h-17h Guyane (12h-20h UTC) → 8 marchés 00h-17h + TAO = 9 marchés
-    - 17h-00h Guyane (20h-03h UTC) → PAUSE totale — aucun nouveau trade
+    - 00h-19h Guyane (03h-22h UTC) → tous les 23 marchés actifs
+    - 19h-00h Guyane (22h-03h UTC) → PAUSE totale
     """
     heure_utc = datetime.utcnow().hour
-
-    # PAUSE totale : 20h-03h UTC = 17h-00h Guyane
-    if heure_utc >= 20 or heure_utc < 3:
+    # PAUSE : 22h-03h UTC = 19h-00h Guyane
+    if heure_utc >= 22 or heure_utc < 3:
         return []
-
-    # Session NUIT : 03h-12h UTC = 00h-09h Guyane
-    # 00h-17h + NUIT + TAO actifs
-    if 3 <= heure_utc < 12:
-        return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
-
-    # Session JOUR : 12h-20h UTC = 09h-17h Guyane
-    # Uniquement 00h-17h + TAO
-    return MARCHES_24H + MARCHES_JOUR
+    # Tous les marchés actifs
+    return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
 
 # Pour compatibilité avec le reste du code
 MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
 
 def get_session_marche(symbole):
     """Retourne la session horaire d'un marché en heure Guyane."""
-    if symbole in MARCHES_NUIT:
-        return "00h-09h Guyane"
-    elif symbole in MARCHES_JOUR:
-        return "09h-17h Guyane"
-    else:
-        return "00h-17h Guyane"
+    return "00h-19h Guyane"
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -184,7 +162,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés 00h-17h : {len(MARCHES_24H)} | Nuit 00h-09h : {len(MARCHES_NUIT)} | Jour 09h-17h : {len(MARCHES_JOUR)}")
+log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | Tous de 00h-19h Guyane")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -192,7 +170,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : 12h après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-09h=00h-17h+NUIT+TAO | 09h-17h=00h-17h+TAO | 17h-00h=PAUSE")
+log.info(f"  Horaires : 00h-19h Guyane (03h-22h UTC) tous marchés | 19h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
