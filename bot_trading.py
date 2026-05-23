@@ -12,7 +12,7 @@ import aiohttp
 import os
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 from ta.volatility import AverageTrueRange
 from ta.momentum import RSIIndicator
@@ -49,12 +49,11 @@ RSI_SEUIL_BAS           = 45     # RSI < 45 → marché baissier → inverser AC
 RSI_SEUIL_HAUT          = 55     # RSI > 55 → marché haussier → inverser VENTE en ACHAT
 RSI_PERIODE             = 14     # période RSI standard
 
-# ── Cooldown après perte uniquement
-COOLDOWN_APRES_PERTE    = 43200  # 12h après stop loss ou timeout négatif
+# ── Protections
+KILL_SWITCH_JOUR        = -10.0
+SEUIL_RUINE             = 300.0
 
 # ── Lock profits par paliers proportionnels au capital
-# Les paliers s'adaptent automatiquement selon le capital actuel
-# Exprimés en % du capital
 LOCK_PALIERS_PCT = [0.15, 0.20, 0.30, 0.60, 1.00, 1.60, 2.40, 3.60, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 40.00]
 
 def get_palier_lock(pnl_max, capital):
@@ -69,16 +68,9 @@ def get_palier_lock(pnl_max, capital):
 # ── Gestion mise dynamique
 WINS_CONFIANCE          = 3
 BOOST_CONFIANCE         = 1.20
-REDUCTION_PERTES        = 0.50
 MIN_TRADES_KELLY        = 30
 KELLY_FRACTION          = 0.25
 KELLY_CAP               = 0.20
-
-# ── Protections
-KILL_SWITCH_JOUR        = -10.0
-SEUIL_RUINE             = 300.0
-MAX_PERTES_CONSECUTIVES = 2
-COOLDOWN_PERTES         = 1800   # 30 min
 
 TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
@@ -168,7 +160,7 @@ log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
 log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX_PCT*100)}% mise")
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
-log.info(f"  Cooldown : 12h après perte | 0 après gain")
+log.info(f"  Cooldown : pause jusqu'à minuit après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
 log.info(f"  Horaires : 00h-16h Guyane (03h-19h UTC) tous marchés | 16h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
@@ -349,11 +341,10 @@ async def analyser_marche(session, symbole):
 # ═══════════════════════════════════════════════════════════════
 #  GESTION MISE DYNAMIQUE
 # ═══════════════════════════════════════════════════════════════
-def calculer_mise(capital, etat, multiplicateur_session=1.0):
+def calculer_mise(capital, etat):
     nb_trades     = etat.get("nb_trades", 0)
     nb_wins       = etat.get("nb_wins", 0)
     wins_consec   = etat.get("wins_consecutifs", 0)
-    pertes_consec = etat.get("pertes_consecutives", 0)
     avg_win_pct   = etat.get("avg_win_pct", 0)
     avg_loss_pct  = etat.get("avg_loss_pct", 0)
 
@@ -366,14 +357,10 @@ def calculer_mise(capital, etat, multiplicateur_session=1.0):
         kelly_frac = max(0, min(kelly_full * KELLY_FRACTION, KELLY_CAP))
         mise       = capital * kelly_frac
 
-    if pertes_consec >= 2:
-        mise *= REDUCTION_PERTES
-        log.info(f"  ⚠️ Mise réduite 50% ({pertes_consec} pertes)")
-    elif wins_consec >= WINS_CONFIANCE:
+    if wins_consec >= WINS_CONFIANCE:
         mise *= BOOST_CONFIANCE
         log.info(f"  💪 Mise boostée +20% ({wins_consec} wins)")
 
-    mise *= multiplicateur_session
     mise  = max(mise, MISE_MIN)
     mise  = min(mise, capital * MISE_MAX_PCT)
     return round(mise, 2)
@@ -533,12 +520,16 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             break
 
     # Libérer le marché
-    # Cooldown 12h uniquement si trade perdu ou timeout négatif
+    # Si trade perdu → pause jusqu'à minuit (remise à zéro PnL jour)
     async with trades_lock:
         trades_ouverts.pop(symbole, None)
         if resultat_final == "PERDU" or (resultat_final != "GAGNE" and gain_final < 0):
-            cooldown_marches[symbole] = time.time() + COOLDOWN_APRES_PERTE
-            log.info(f"  ❄️ Cooldown 12h [{symbole}] — marché en pause jusqu'à demain")
+            # Calculer le timestamp de minuit aujourd'hui
+            maintenant    = datetime.now()
+            minuit        = maintenant.replace(hour=0, minute=0, second=0, microsecond=0)
+            minuit_demain = minuit + timedelta(days=1)
+            cooldown_marches[symbole] = minuit_demain.timestamp()
+            log.info(f"  ❄️ [{symbole}] pause jusqu'à minuit — reprendra à 00h00")
         else:
             cooldown_marches.pop(symbole, None)
             log.info(f"  ✅ [{symbole}] libéré immédiatement — trade gagnant")
@@ -630,21 +621,6 @@ def verifier_protections(etat, capital):
     if etat.get("pnl_jour", 0.0) <= KILL_SWITCH_JOUR:
         log.warning(f"⚠️ KILL SWITCH — PnL jour {etat.get('pnl_jour', 0)}€")
         return "KILL_SWITCH"
-    cooldown_until = etat.get("cooldown_until", 0)
-    if time.time() < cooldown_until:
-        restant = int((cooldown_until - time.time()) / 60)
-        log.info(f"  ❄️ Cooldown — {restant} min restantes")
-        return "COOLDOWN"
-    if cooldown_until > 0 and time.time() >= cooldown_until:
-        etat["pertes_consecutives"] = 0
-        etat["cooldown_until"]      = 0
-        sauvegarder_etat(etat)
-    if etat.get("pertes_consecutives", 0) >= MAX_PERTES_CONSECUTIVES:
-        log.warning(f"  {MAX_PERTES_CONSECUTIVES} pertes → cooldown {COOLDOWN_PERTES//60} min")
-        etat["cooldown_until"]      = int(time.time()) + COOLDOWN_PERTES
-        etat["pertes_consecutives"] = 0
-        sauvegarder_etat(etat)
-        return "COOLDOWN"
     return "OK"
 
 def reset_pnl_jour_si_nouveau_jour(etat):
@@ -785,7 +761,6 @@ async def envoyer_rapport_hebdomadaire(session, etat):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import io
-    from datetime import timedelta
 
     historique = etat.get("historique", [])
     if not historique:
@@ -996,7 +971,7 @@ def afficher_tableau_de_bord(etat):
     log.info(f"  PnL jour   : {'+' if etat.get('pnl_jour',0)>=0 else ''}{round(etat.get('pnl_jour',0),2)}€")
     log.info(f"  Trades     : {nb_trades} | Wins : {nb_wins} ({win_rate:.1f}%)")
     log.info(f"  Ouverts    : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}")
-    log.info(f"  Pertes c.  : {etat.get('pertes_consecutives',0)}/{MAX_PERTES_CONSECUTIVES}")
+    log.info(f"  Pertes c.  : {etat.get('pertes_consecutives',0)}")
     log.info(f"  Wins c.    : {etat.get('wins_consecutifs',0)}")
     log.info(f"  Gagné      : +{round(etat.get('total_gagne',0),2)}€")
     log.info(f"  Perdu      : -{round(etat.get('total_perdu',0),2)}€")
@@ -1021,7 +996,7 @@ async def boucle_principale():
 
     for champ, valeur in [
         ("pnl_jour", 0.0), ("date_jour", ""), ("wins_consecutifs", 0),
-        ("cooldown_until", 0), ("nb_skips", 0)
+        ("nb_skips", 0)
     ]:
         if champ not in etat:
             etat[champ] = valeur
@@ -1067,7 +1042,7 @@ async def boucle_principale():
                     await telegram(session,
                         f"🚨 <b>SEUIL RUINE !</b>\nCapital : {etat['capital']}€\nBot arrêté !")
                     break
-                if statut in ("KILL_SWITCH", "COOLDOWN"):
+                if statut == "KILL_SWITCH":
                     await asyncio.sleep(60)
                     etat = charger_etat()
                     continue
