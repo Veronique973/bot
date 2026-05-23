@@ -35,7 +35,7 @@ MISE_MIN                = 10.0
 MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
-TIMEOUT_TRADE           = 10 * 3600  # 10h max par trade
+TIMEOUT_TRADE           = 7 * 3600   # 7h max par trade
 MAX_TRADES_SIMULTANES   = 20
 
 # ── Détection signal mean reversion — surveillance temps réel
@@ -76,10 +76,8 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Session 1 : 00h-04h50 Guyane (03h-07h50 UTC) — session asiatique
-# Pause     : 04h50-09h Guyane (07h50-12h UTC)
-# Session 2 : 09h-16h Guyane (12h-19h UTC) — session Londres/New York
-# Pause     : 16h-00h Guyane (19h-03h UTC)
+# Lun-Ven + Dim : 00h-04h50 | PAUSE | 09h-16h | PAUSE
+# Samedi        : 00h-04h50 | PAUSE toute la journée
 
 MARCHES = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
@@ -121,20 +119,32 @@ def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle.
 
     Heure Guyane = UTC-3
-    - 00h-04h50 Guyane (03h-07h50 UTC) → session asiatique
-    - 04h50-09h Guyane (07h50-12h UTC) → PAUSE
-    - 09h-16h Guyane (12h-19h UTC) → session Londres/New York
-    - 16h-00h Guyane (19h-03h UTC) → PAUSE
+    - Lundi-Vendredi + Dimanche :
+      00h-04h50 Guyane (03h-07h50 UTC) → session asiatique
+      04h50-09h Guyane (07h50-12h UTC) → PAUSE
+      09h-16h Guyane (12h-19h UTC) → session Londres/New York
+      16h-00h Guyane (19h-03h UTC) → PAUSE
+    - Samedi :
+      00h-04h50 Guyane (03h-07h50 UTC) → session asiatique uniquement
+      04h50-00h Guyane (07h50-03h UTC) → PAUSE toute la journée
     """
-    heure_utc  = datetime.utcnow().hour
-    minute_utc = datetime.utcnow().minute
+    now        = datetime.utcnow()
+    heure_utc  = now.hour
+    minute_utc = now.minute
+    jour_semaine = now.weekday()  # 0=lundi, 5=samedi, 6=dimanche
 
     # Session asiatique : 03h-07h50 UTC = 00h-04h50 Guyane
+    # Valable tous les jours
     if 3 <= heure_utc < 7:
         return MARCHES
     if heure_utc == 7 and minute_utc < 50:
         return MARCHES
 
+    # Samedi → PAUSE après 04h50 Guyane
+    if jour_semaine == 5:
+        return []
+
+    # Lundi-Vendredi + Dimanche
     # Session Londres/New York : 12h-19h UTC = 09h-16h Guyane
     if 12 <= heure_utc < 19:
         return MARCHES
@@ -169,7 +179,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : pause jusqu'à minuit après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-04h50 Guyane | PAUSE | 09h-16h Guyane | PAUSE")
+log.info(f"  Horaires : Lun-Ven+Dim 00h-04h50 | 09h-16h | Sam 00h-04h50 seulement")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
