@@ -79,21 +79,14 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # Tous les marchés actifs de 00h à 16h Guyane (03h-19h UTC)
 # Pause totale : 16h-00h Guyane = 19h-03h UTC
 
-MARCHES_24H = [
+MARCHES = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
     "UNIUSDT",  "ARBUSDT",  "FTMUSDT",
     "SUIUSDT",  "XMRUSDT",
-]
-
-MARCHES_NUIT = [
     "ETHUSDT",  "XRPUSDT",  "SOLUSDT",  "ADAUSDT",
     "LINKUSDT", "AVAXUSDT", "DOTUSDT",  "DOGEUSDT",
     "LTCUSDT",  "ALGOUSDT", "FILUSDT",  "AAVEUSDT",
-    "POLUSDT",  "APEUSDT",
-]
-
-MARCHES_JOUR = [
-    "TAOUSDT",
+    "POLUSDT",  "APEUSDT",  "TAOUSDT",
 ]
 
 KRAKEN_SYMBOLS = {
@@ -133,11 +126,7 @@ def get_marches_actifs():
     # PAUSE : 19h-03h UTC = 16h-00h Guyane
     if heure_utc >= 19 or heure_utc < 3:
         return []
-    # Tous les marchés actifs
-    return MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
-
-# Pour compatibilité avec le reste du code
-MARCHES = MARCHES_24H + MARCHES_NUIT + MARCHES_JOUR
+    return MARCHES
 
 def get_session_marche(symbole):
     """Retourne la session horaire d'un marché en heure Guyane."""
@@ -154,7 +143,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | Tous de 00h-16h Guyane")
+log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | 00h-16h Guyane")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
