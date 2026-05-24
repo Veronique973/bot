@@ -542,10 +542,12 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
         trades_ouverts.pop(symbole, None)
         if resultat_final == "PERDU" or (resultat_final != "GAGNE" and gain_final < 0):
             # Calculer le timestamp de minuit aujourd'hui
-            maintenant    = datetime.now()
+            maintenant    = datetime.utcnow() - timedelta(hours=3)
             minuit        = maintenant.replace(hour=0, minute=0, second=0, microsecond=0)
             minuit_demain = minuit + timedelta(days=1)
-            cooldown_marches[symbole] = minuit_demain.timestamp()
+            # Reconvertir en UTC pour le timestamp
+            minuit_demain_utc = minuit_demain + timedelta(hours=3)
+            cooldown_marches[symbole] = minuit_demain_utc.timestamp()
             log.info(f"  ❄️ [{symbole}] pause jusqu'à minuit — reprendra à 00h00")
         else:
             cooldown_marches.pop(symbole, None)
@@ -579,7 +581,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat, et
             )
 
         etat_global.setdefault("historique", []).append({
-            'heure':     datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'heure':     (datetime.utcnow() - timedelta(hours=3)).strftime('%Y-%m-%d %H:%M'),
             'marche':    symbole,
             'direction': direction,
             'resultat':  resultat_final,
@@ -641,7 +643,9 @@ def verifier_protections(etat, capital):
     return "OK"
 
 def reset_pnl_jour_si_nouveau_jour(etat):
-    aujourd_hui = datetime.now().strftime('%Y-%m-%d')
+    # Heure Guyane = UTC-3
+    maintenant_guyane = datetime.utcnow() - timedelta(hours=3)
+    aujourd_hui = maintenant_guyane.strftime('%Y-%m-%d')
     if etat.get("date_jour", "") != aujourd_hui:
         etat["pnl_jour"]  = 0.0
         etat["date_jour"] = aujourd_hui
@@ -659,8 +663,9 @@ async def envoyer_rapport_quotidien(session, etat):
     import io
 
     historique  = etat.get("historique", [])
-    aujourd_hui = datetime.now().strftime('%Y-%m-%d')
-    date_affich = datetime.now().strftime('%d/%m/%Y')
+    maintenant_guyane = datetime.utcnow() - timedelta(hours=3)
+    aujourd_hui = maintenant_guyane.strftime('%Y-%m-%d')
+    date_affich = maintenant_guyane.strftime('%d/%m/%Y')
 
     # ── Gains par marché aujourd'hui
     gains_jour    = {}
@@ -783,7 +788,7 @@ async def envoyer_rapport_hebdomadaire(session, etat):
     if not historique:
         return
 
-    maintenant     = datetime.now()
+    maintenant     = datetime.utcnow() - timedelta(hours=3)
     il_y_a_7_jours = (maintenant - timedelta(days=7)).strftime('%Y-%m-%d')
     date_debut     = (maintenant - timedelta(days=7)).strftime('%d/%m')
     date_fin       = maintenant.strftime('%d/%m/%Y')
@@ -1028,7 +1033,7 @@ async def boucle_principale():
             f"Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis prix référence\n"
             f"Lock paliers | Stop max -{STOP_LOSS_PCT}% du capital\n"
             f"Kill switch : {KILL_SWITCH_JOUR}€/jour\n"
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"{(datetime.utcnow() - timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
         while True:
