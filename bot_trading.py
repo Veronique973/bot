@@ -35,7 +35,7 @@ MISE_MIN                = 10.0
 MISE_MAX_PCT            = 0.25
 CHECK_INTERVAL          = 10         # secondes entre chaque check prix
 PAUSE_SCAN              = 30         # secondes entre chaque scan de nouveaux marchés
-TIMEOUT_TRADE           = 7 * 3600   # 7h max par trade
+TIMEOUT_TRADE           = 12 * 3600  # 12h max par trade
 MAX_TRADES_SIMULTANES   = 20
 
 # ── Détection signal mean reversion — surveillance temps réel
@@ -76,8 +76,8 @@ TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ── Horaires de trading (heure Guyane = UTC-3)
-# Lun-Ven + Dim : 00h-04h50 | PAUSE | 09h-16h | PAUSE
-# Samedi        : 00h-04h50 | PAUSE toute la journée
+# Tous les marchés actifs de 00h à 19h Guyane (03h-22h UTC)
+# Pause totale : 19h-00h Guyane = 22h-03h UTC
 
 MARCHES = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
@@ -119,46 +119,17 @@ def get_marches_actifs():
     """Retourne les marchés actifs selon l'heure UTC actuelle.
 
     Heure Guyane = UTC-3
-    - Lundi-Vendredi + Dimanche :
-      00h-04h50 Guyane (03h-07h50 UTC) → session asiatique
-      04h50-09h Guyane (07h50-12h UTC) → PAUSE
-      09h-16h Guyane (12h-19h UTC) → session Londres/New York
-      16h-00h Guyane (19h-03h UTC) → PAUSE
-    - Samedi :
-      00h-04h50 Guyane (03h-07h50 UTC) → session asiatique uniquement
-      04h50-00h Guyane (07h50-03h UTC) → PAUSE toute la journée
+    - 00h-19h Guyane (03h-22h UTC) → tous les 23 marchés actifs
+    - 19h-00h Guyane (22h-03h UTC) → PAUSE totale
     """
-    now        = datetime.utcnow()
-    heure_utc  = now.hour
-    minute_utc = now.minute
-    jour_semaine = now.weekday()  # 0=lundi, 5=samedi, 6=dimanche
-
-    # Session asiatique : 03h-07h50 UTC = 00h-04h50 Guyane
-    # Valable tous les jours
-    if 3 <= heure_utc < 7:
-        return MARCHES
-    if heure_utc == 7 and minute_utc < 50:
-        return MARCHES
-
-    # Samedi → PAUSE après 04h50 Guyane
-    if jour_semaine == 5:
+    heure_utc = datetime.utcnow().hour
+    if heure_utc >= 22 or heure_utc < 3:
         return []
-
-    # Lundi-Vendredi + Dimanche
-    # Session Londres/New York : 12h-19h UTC = 09h-16h Guyane
-    if 12 <= heure_utc < 19:
-        return MARCHES
-
-    # PAUSE dans tous les autres cas
-    return []
+    return MARCHES
 
 def get_session_marche(symbole):
     """Retourne la session horaire d'un marché en heure Guyane."""
-    heure_utc  = datetime.utcnow().hour
-    minute_utc = datetime.utcnow().minute
-    if (3 <= heure_utc < 7) or (heure_utc == 7 and minute_utc < 50):
-        return "00h-04h50 Guyane"
-    return "09h-16h Guyane"
+    return "00h-19h Guyane"
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -171,7 +142,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | 00h-04h50 et 09h-16h Guyane")
+log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | 00h-19h Guyane")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -179,7 +150,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : pause jusqu'à minuit après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : Lun-Ven+Dim 00h-04h50 | 09h-16h | Sam 00h-04h50 seulement")
+log.info(f"  Horaires : 00h-19h Guyane (03h-22h UTC) | 19h-00h=PAUSE")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
@@ -686,8 +657,7 @@ async def envoyer_rapport_quotidien(session, etat):
 
     # ── Stats par session
     sessions_stats = {
-        "00h-04h50": {"trades": 0, "gains": 0.0, "wins": 0},
-        "09h-16h":   {"trades": 0, "gains": 0.0, "wins": 0},
+        "00h-19h": {"trades": 0, "gains": 0.0, "wins": 0},
     }
 
     for h in trades_jour:
@@ -710,27 +680,16 @@ async def envoyer_rapport_quotidien(session, etat):
             pertes_jour[marche] = pertes_jour.get(marche, 0) + 1
             duree_pertes.append(duree)
             vol_pertes.append(vol)
-            # Heure de la perte
             if len(heure_str) >= 13:
-                heure_trade = int(heure_str[11:13])
-                heure_guyane = (heure_trade) % 24
-                tranche = f"{heure_guyane:02d}h"
+                heure_trade  = int(heure_str[11:13])
+                tranche      = f"{heure_trade:02d}h"
                 heure_pertes[tranche] = heure_pertes.get(tranche, 0) + 1
 
-        # Session
-        if len(heure_str) >= 13:
-            heure_utc_trade = int(heure_str[11:13])
-            if 3 <= heure_utc_trade < 8:
-                s = "00h-04h50"
-            elif 12 <= heure_utc_trade < 19:
-                s = "09h-16h"
-            else:
-                s = None
-            if s:
-                sessions_stats[s]["trades"] += 1
-                sessions_stats[s]["gains"]  = round(sessions_stats[s]["gains"] + gain, 2)
-                if resultat == "GAGNE":
-                    sessions_stats[s]["wins"] += 1
+        # Session unique 00h-19h
+        sessions_stats["00h-19h"]["trades"] += 1
+        sessions_stats["00h-19h"]["gains"]   = round(sessions_stats["00h-19h"]["gains"] + gain, 2)
+        if resultat == "GAGNE":
+            sessions_stats["00h-19h"]["wins"] += 1
 
     # ── Graphique capital intraday
     try:
