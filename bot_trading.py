@@ -75,9 +75,7 @@ KELLY_CAP               = 0.20
 TELEGRAM_TOKEN   = os.environ.get('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
-# ── Horaires de trading (heure Guyane = UTC-3)
-# Tous les marchés actifs de 00h à 19h Guyane (03h-22h UTC)
-# Pause totale : 19h-00h Guyane = 22h-03h UTC
+# ── Trading 24h/24 — 7j/7 — aucune restriction horaire
 
 MARCHES = [
     "ATOMUSDT", "NEARUSDT", "TRXUSDT",
@@ -115,21 +113,14 @@ KRAKEN_SYMBOLS = {
     "TAOUSDT":   "TAOUSD",
 }
 
-def get_marches_actifs():
-    """Retourne les marchés actifs selon l'heure UTC actuelle.
 
-    Heure Guyane = UTC-3
-    - 00h-19h Guyane (03h-22h UTC) → tous les 23 marchés actifs
-    - 19h-00h Guyane (22h-03h UTC) → PAUSE totale
-    """
-    heure_utc = datetime.utcnow().hour
-    if heure_utc >= 22 or heure_utc < 3:
-        return []
+def get_marches_actifs():
+    """Retourne tous les marchés — actifs 24h/24 7j/7."""
     return MARCHES
 
 def get_session_marche(symbole):
-    """Retourne la session horaire d'un marché en heure Guyane."""
-    return "00h-19h Guyane"
+    """Retourne la session horaire."""
+    return "24h/24 — 7j/7"
 
 # ═══════════════════════════════════════════════════════════════
 #  ÉTAT GLOBAL
@@ -142,7 +133,7 @@ trades_lock       = None  # initialisé dans boucle_principale()
 log.info("=" * 60)
 log.info("  BOT HUMAIN — VÉRONIQUE973 V4")
 log.info(f"  Capital : {CAPITAL_INITIAL}€ | Levier x{LEVIER}")
-log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | 00h-19h Guyane")
+log.info(f"  Marchés actifs : {len(MARCHES)} cryptos | 24h/24 — 7j/7")
 log.info(f"  Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}% depuis le prix de référence")
 log.info(f"  Surveillance temps réel — peu importe la durée")
 log.info(f"  RSI 1h : seuil bas={RSI_SEUIL_BAS} | seuil haut={RSI_SEUIL_HAUT} | inversion auto")
@@ -150,7 +141,7 @@ log.info(f"  Stop : {STOP_LOSS_PCT}% capital | plafonné {int(STOP_LOSS_MISE_MAX
 log.info(f"  Lock paliers : {LOCK_PALIERS_PCT}% du capital")
 log.info(f"  Cooldown : pause jusqu'à minuit après perte | 0 après gain")
 log.info(f"  Kill switch : {KILL_SWITCH_JOUR}€/jour | Ruine : {SEUIL_RUINE}€")
-log.info(f"  Horaires : 00h-19h Guyane (03h-22h UTC) | 19h-00h=PAUSE")
+log.info(f"  Horaires : 24h/24 — 7j/7 — aucune restriction")
 log.info(f"  Telegram : {'ON' if TELEGRAM_TOKEN else 'OFF'}")
 log.info("=" * 60)
 
@@ -655,9 +646,9 @@ async def envoyer_rapport_quotidien(session, etat):
     vol_wins     = []
     vol_pertes   = []
 
-    # ── Stats par session
+    # ── Stats session unique
     sessions_stats = {
-        "00h-19h": {"trades": 0, "gains": 0.0, "wins": 0},
+        "24h/24": {"trades": 0, "gains": 0.0, "wins": 0},
     }
 
     for h in trades_jour:
@@ -685,11 +676,11 @@ async def envoyer_rapport_quotidien(session, etat):
                 tranche      = f"{heure_trade:02d}h"
                 heure_pertes[tranche] = heure_pertes.get(tranche, 0) + 1
 
-        # Session unique 00h-19h
-        sessions_stats["00h-19h"]["trades"] += 1
-        sessions_stats["00h-19h"]["gains"]   = round(sessions_stats["00h-19h"]["gains"] + gain, 2)
+        # Session unique 24h/24
+        sessions_stats["24h/24"]["trades"] += 1
+        sessions_stats["24h/24"]["gains"]   = round(sessions_stats["24h/24"]["gains"] + gain, 2)
         if resultat == "GAGNE":
-            sessions_stats["00h-19h"]["wins"] += 1
+            sessions_stats["24h/24"]["wins"] += 1
 
     # ── Graphique capital intraday
     try:
