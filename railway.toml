@@ -1,0 +1,5 @@
+[deploy]
+startCommand = "python bot_trading.py"
+
+[variables]
+MISE_PYTHON_GITHUB_ATTESTATIONS = "false"
