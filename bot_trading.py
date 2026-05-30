@@ -349,7 +349,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat_glo
     log.info(f"  Mise : {mise}€ × x{LEVIER} = {round(mise*LEVIER,2)}€ | Trades : {len(trades_ouverts)}/{MAX_TRADES_SIMULTANES}\n")
 
     await telegram(session,
-        f"🐉📊 <b>TRADE OUVERT — VÉRONIQUE973 V4</b>\n"
+        f"🌼📊 <b>TRADE OUVERT — VÉRONIQUE973 V4</b>\n"
         f"{'🟢 ACHAT' if direction == 'ACHAT' else '🔴 VENTE'} {symbole}\n"
         f"Variation : {details.get('variation_pct', 0):.2f}% depuis ref\n"
         f"Volume : {details.get('vol_ratio', 0):.2f}x | RSI 1h : {rsi_1h}\n"
@@ -393,7 +393,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat_glo
             lock_actuel = nouveau_lock
             log.info(f"  🔒 LOCK {lock_actuel}€ GARANTI [{symbole}] (PnL max={pnl_max_atteint:.2f}€)")
             await telegram(session,
-                f"🐉🔒 <b>{lock_actuel}€ garanti !</b>\n"
+                f"🌼🔒 <b>{lock_actuel}€ garanti !</b>\n"
                 f"{symbole} | PnL max : +{pnl_max_atteint:.2f}€\n"
                 f"Gain verrouillé ✅"
             )
@@ -403,7 +403,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat_glo
             duree = int((time.time() - debut) / 60)
             log.info(f"\n  🔒 SORTIE LOCK [{symbole}] +{lock_actuel}€ (max={pnl_max_atteint:.2f}€) | {duree}min")
             await telegram(session,
-                f"🐉🔒 <b>SORTIE LOCK</b>\n"
+                f"🌼🔒 <b>SORTIE LOCK</b>\n"
                 f"{symbole} | {direction}\n"
                 f"Gain : <b>+{lock_actuel}€</b>\n"
                 f"PnL max : +{pnl_max_atteint:.2f}€\n"
@@ -433,7 +433,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat_glo
                 resultat_final = "PERDU"
             log.info(f"\n  🛑 STOP [{symbole}] {'+' if pnl>=0 else ''}{pnl:.2f}€ | {duree}min")
             await telegram(session,
-                f"🐉🛑 <b>STOP</b>\n"
+                f"🌼🛑 <b>STOP</b>\n"
                 f"{symbole} {direction}\n"
                 f"Résultat : {'+' if pnl>=0 else ''}{pnl:.2f}€\n"
                 f"Durée : {duree} min"
@@ -504,7 +504,7 @@ async def executer_trade(session, symbole, direction, capital, details, etat_glo
     win_rate  = (nb_wins / nb_trades_total * 100) if nb_trades_total > 0 else 0
     perf      = (etat_global["capital"] - CAPITAL_INITIAL) / CAPITAL_INITIAL * 100
     await telegram(session,
-        f"🐉📈 <b>RAPPORT VÉRONIQUE973 — Trade #{numero_trade}</b>\n"
+        f"🌼📈 <b>RAPPORT VÉRONIQUE973 — Trade #{numero_trade}</b>\n"
         f"Capital : <b>{round(etat_global['capital'],2)}€</b> "
         f"({'+' if perf>=0 else ''}{round(perf,2)}%)\n"
         f"PnL jour : {'+' if etat_global.get('pnl_jour',0)>=0 else ''}"
@@ -673,7 +673,7 @@ async def envoyer_rapport_quotidien(session, etat):
     msg_pire = "\n".join([f"💀 {m} {g}€" for m, g in pires3 if g < 0])
 
     message = (
-        f"🐉📊 <b>RAPPORT QUOTIDIEN VÉRONIQUE973</b>\n"
+        f"🌼📊 <b>RAPPORT QUOTIDIEN VÉRONIQUE973</b>\n"
         f"Journee du {date_affich}\n\n"
         f"💰 <b>RÉSULTAT</b>\n"
         f"Total jour : <b>{'+' if total_jour>=0 else ''}{total_jour}€</b>\n"
@@ -863,7 +863,7 @@ async def envoyer_rapport_hebdomadaire(session, etat):
         )
 
     message = (
-        f"🐉 <b>RAPPORT HEBDOMADAIRE VÉRONIQUE973</b>\n"
+        f"🌼 <b>RAPPORT HEBDOMADAIRE VÉRONIQUE973</b>\n"
         f"Semaine du {date_debut} au {date_fin}\n"
         f"<code>{'─'*44}</code>\n"
         f"<code>{'MARCHÉ':<10} {'SEMAINE':>8} {'G/P':>6}  | {'TOTAL':>8} {'G/P'}</code>\n"
@@ -940,7 +940,7 @@ async def boucle_principale():
     connector = aiohttp.TCPConnector(limit=50)
     async with aiohttp.ClientSession(connector=connector) as session:
         await telegram(session,
-            f"🐉🚀 <b>BOT VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
+            f"🌼🚀 <b>BOT VÉRONIQUE973 V4 DÉMARRÉ</b>\n"
             f"Capital : {round(etat['capital'],2)}€\n"
             f"10 marchés | 24h/24 — 7j/7\n"
             f"Signal : mouvement ≥ {SEUIL_MOUVEMENT_PCT}%\n"
@@ -975,7 +975,7 @@ async def boucle_principale():
                 statut = verifier_protections(etat, etat["capital"])
                 if statut == "RUINE":
                     await telegram(session,
-                        f"🐉🚨 <b>SEUIL RUINE !</b>\nCapital : {etat['capital']}€\nBot arrêté !")
+                        f"🌼🚨 <b>SEUIL RUINE !</b>\nCapital : {etat['capital']}€\nBot arrêté !")
                     break
                 if statut == "KILL_SWITCH":
                     await asyncio.sleep(60)
